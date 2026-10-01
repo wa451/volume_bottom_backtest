@@ -17,7 +17,16 @@ def restore_market(settings, db, storage):
         dest = settings.data_root / relative
         if not dest.exists():
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(storage.get(meta["key"]), dest)
+            source = storage.get(meta["key"])
+            expected_size = meta.get("signature", [source.stat().st_size])[0]
+            temp = dest.with_name(dest.name + "." + uuid4().hex + ".tmp")
+            try:
+                shutil.copyfile(source, temp)
+                if temp.stat().st_size != expected_size:
+                    raise ValueError(f"Restored cache size mismatch: {relative}")
+                temp.replace(dest)
+            finally:
+                temp.unlink(missing_ok=True)
 
 
 def backup_market(settings, db, storage):

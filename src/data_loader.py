@@ -41,7 +41,10 @@ def exchange_sessions(start: str, end: str) -> pd.DatetimeIndex:
     import exchange_calendars as xc
     # Cover warmup ranges explicitly instead of the library's default horizon.
     cal = xc.get_calendar('XTKS', start=start, end=end)
-    return dates(cal.sessions_in_range(start, end))
+    # Requested bounds may be holidays, before/after this calendar's first/last
+    # session. Filter directly instead of parsing them as in-bounds sessions.
+    sessions = dates(cal.sessions)
+    return sessions[(sessions >= pd.Timestamp(start)) & (sessions <= pd.Timestamp(end))]
 
 
 def align_sessions(df: pd.DataFrame) -> pd.DataFrame:

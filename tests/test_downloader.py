@@ -11,6 +11,8 @@ def valid_frame(start='2020-06-01', n=5):
 
 def test_partial_batch_retry_and_cached_skip(config, tmp_path, monkeypatch):
     init_dirs(tmp_path)
+    monkeypatch.setattr('src.downloader.today', lambda: pd.Timestamp('2020-06-05'))
+    monkeypatch.setattr('src.downloader.last_completed_date', lambda: pd.Timestamp('2020-06-05'))
     config['download'].update(max_retries=2, retry_backoff_seconds=0)
     d = Downloader(tmp_path, config)
     calls = []
@@ -28,6 +30,81 @@ def test_partial_batch_retry_and_cached_skip(config, tmp_path, monkeypatch):
     calls.clear()
     d.download_prices(['7203.T','130A.T'])
     assert calls == []
+
+
+def test_delayed_price_tail_is_retried_same_day(config, tmp_path, monkeypatch):
+    init_dirs(tmp_path)
+    monkeypatch.setattr('src.downloader.today', lambda: pd.Timestamp('2020-06-08'))
+    monkeypatch.setattr('src.downloader.last_completed_date', lambda: pd.Timestamp('2020-06-08'))
+    old = seed_prices(tmp_path, config)
+    first = Downloader(tmp_path, config)
+    monkeypatch.setattr(first, '_request', lambda *a: old.iloc[-1:])
+    first.download_prices(['7203.T'])
+    assert first.manifest['price:7203.T']['checked_through'] == '2020-06-09'
+    assert first.manifest['price:7203.T']['completed_through'] == '2020-06-05'
+
+    retry = Downloader(tmp_path, config)
+    calls = []
+    def request(tickers, start):
+        calls.append(start)
+        return valid_frame('2020-06-05', n=2)
+    monkeypatch.setattr(retry, '_request', request)
+    retry.download_prices(['7203.T'])
+    assert calls == [old.index[-1]]
+    assert retry.manifest['price:7203.T']['completed_through'] == '2020-06-08'
+    combined = pd.read_parquet(tmp_path / 'data/market/7203.T.parquet')
+    pd.testing.assert_frame_equal(combined.loc[old.index], old, check_names=False, check_freq=False)
+    calls.clear()
+    retry.download_prices(['7203.T'])
+    assert calls == []
+
+
+def test_legacy_overstated_price_completion_is_not_trusted(config, tmp_path, monkeypatch):
+    init_dirs(tmp_path)
+    monkeypatch.setattr('src.downloader.today', lambda: pd.Timestamp('2020-06-08'))
+    monkeypatch.setattr('src.downloader.last_completed_date', lambda: pd.Timestamp('2020-06-08'))
+    old = seed_prices(tmp_path, config)
+    atomic_json({'price:7203.T': {'requested_start': str(acquisition_start(config).date()),
+                                 'checked_through': '2020-06-09', 'completed_through': '2020-06-08'}},
+                tmp_path / 'data/download_manifest.json')
+    d = Downloader(tmp_path, config)
+    calls = []
+    def request(tickers, start):
+        calls.append(start)
+        return valid_frame('2020-06-05', n=2)
+    monkeypatch.setattr(d, '_request', request)
+    d.download_prices(['7203.T'])
+    assert calls == [old.index[-1]]
+
+
+def test_weekend_does_not_require_nontrading_price_bars(config, tmp_path, monkeypatch):
+    init_dirs(tmp_path)
+    monkeypatch.setattr('src.downloader.today', lambda: pd.Timestamp('2020-06-07'))
+    monkeypatch.setattr('src.downloader.last_completed_date', lambda: pd.Timestamp('2020-06-07'))
+    old = seed_prices(tmp_path, config)
+    d = Downloader(tmp_path, config)
+    calls = []
+    def request(tickers, start):
+        calls.append(start)
+        return old.iloc[-1:]
+    monkeypatch.setattr(d, '_request', request)
+    d.download_prices(['7203.T'])
+    d.download_prices(['7203.T'])
+    assert calls == [old.index[-1]]
+    assert d.manifest['price:7203.T']['completed_through'] == '2020-06-05'
+
+
+def test_old_intraday_tail_requires_fresh_confirmation(config, tmp_path, monkeypatch):
+    init_dirs(tmp_path)
+    monkeypatch.setattr('src.downloader.today', lambda: pd.Timestamp('2020-06-08'))
+    monkeypatch.setattr('src.downloader.last_completed_date', lambda: pd.Timestamp('2020-06-08'))
+    seed_prices(tmp_path, config, frame=valid_frame(n=6))
+    d = Downloader(tmp_path, config)
+    monkeypatch.setattr(d, '_request', lambda *a: valid_frame('2020-06-05', n=1))
+    d.download_prices(['7203.T'])
+    assert d.manifest['price:7203.T']['last_bar'] == '2020-06-08'
+    assert d.manifest['price:7203.T']['completed_through'] == '2020-06-05'
+    assert d._price_plan('7203.T', 'price', update=True) is not None
 
 
 def test_failure_saved_and_force_retry(config, tmp_path, monkeypatch):

@@ -63,6 +63,13 @@ def test_zero_volume_holidays_are_filtered(prices, config):
     assert f.attrs['nontrading_zero_volume_rows'] == 1
 
 
+def test_exchange_sessions_accepts_holiday_bounds():
+    sessions = exchange_sessions('2020-05-05', '2020-06-07')
+    assert sessions[0] == pd.Timestamp('2020-05-07')
+    assert sessions[-1] == pd.Timestamp('2020-06-05')
+    assert not sessions.dayofweek.isin([5, 6]).any()
+
+
 def test_positive_volume_calendar_conflict_rejected(prices, config):
     df = prices.iloc[:3].copy()
     df.index = pd.to_datetime(['2023-05-02','2023-05-03','2023-05-08']).as_unit('ns')

@@ -112,12 +112,21 @@ def prepare_features(root: Path, ticker: str, c: dict):
         return [path.stat().st_size, path.stat().st_mtime_ns] if path.exists() else None
     key = fingerprint({'prices': signature(price_path), 'shares': signature(shares_path),
                        'data': c['data'], 'strategy': c['strategy'], 'splits': c['split_handling'],
-                       'bins': c['market_cap_bins'], 'cap': c.get('market_cap', {}), 'version': 3})
+                       'bins': c['market_cap_bins'], 'cap': c.get('market_cap', {}), 'version': 4})
     if feature_path.exists() and read_json(meta_path).get('key') == key:
         return pd.read_parquet(feature_path)
     prices = load_prices(price_path)
-    shares = normalize_shares(pd.read_parquet(shares_path)) if shares_path.exists() else None
+    shares, shares_error = None, ''
+    if shares_path.exists():
+        try:
+            shares = normalize_shares(pd.read_parquet(shares_path))
+        except (ValueError, OSError, KeyError) as e:
+            shares_error = str(e)
+            log.warning('Invalid shares cache for %s; analyzing without market cap: %s', ticker, e)
     df = attach_market_cap(calculate_indicators(align_sessions(adjust_corporate_actions(prices, c)), c['strategy']), shares, c)
+    if shares_error:
+        df['market_cap_missing_reason'] = 'invalid_shares_cache'
+    df.attrs['shares_cache_error'] = shares_error
     atomic_parquet(df, feature_path)
     atomic_json({'key': key}, meta_path)
     return df
@@ -132,7 +141,7 @@ def run_backtest(root: Path, universe: pd.DataFrame, c: dict, progress=None):
         ticker = info['ticker']
         q = {**info, 'price_success': False, 'shares_success': False, 'split_events': 0,
              'missing_cells': 0, 'repaired_rows': 0, 'repair_flag_available': False,
-             'excluded_signal_parameter_pairs': 0, 'error': ''}
+             'excluded_signal_parameter_pairs': 0, 'error': '', 'shares_error': ''}
         q['missing_sessions'] = 0
         q['nontrading_zero_volume_rows'] = 0
         path = root / f'data/market/{ticker}.parquet'
@@ -150,6 +159,7 @@ def run_backtest(root: Path, universe: pd.DataFrame, c: dict, progress=None):
                      first_bar=str(df.index[0].date()), last_bar=str(df.index[-1].date()),
                      indicator_ready_rows=int(df.drawdown.notna().sum()))
             q['missing_sessions'] = int(df.missing_session.sum())
+            q['shares_error'] = df.attrs.get('shares_cache_error', '')
             q['nontrading_zero_volume_rows'] = df.attrs.get('nontrading_zero_volume_rows', 0)
             trades, excluded = ticker_trades(df, info, c, benchmarks)
             q['excluded_signal_parameter_pairs'] = excluded

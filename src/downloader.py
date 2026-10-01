@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from tqdm import tqdm
-from .data_loader import normalize_prices, normalize_shares, load_prices
+from .data_loader import normalize_prices, normalize_shares, load_prices, exchange_sessions
 from .utils import acquisition_start, today, last_completed_date, read_json, atomic_json, atomic_parquet
 
 log = logging.getLogger(__name__)
@@ -102,9 +102,10 @@ class Downloader:
                 log.warning('Invalid cache for %s: %s; refetching', ticker, e)
         if old is not None:
             coverage_start = pd.Timestamp(meta.get('requested_start', old.index[0]))
-            completed = pd.Timestamp(meta.get('completed_through', min(old.index[-1], today() - pd.Timedelta(days=1))))
+            completed = min(pd.Timestamp(meta.get('completed_through', min(old.index[-1], today() - pd.Timedelta(days=1)))),
+                            self._confirmed_price_date(old))
             needs_backfill = self.start < coverage_start
-            if not force and (not update or (not needs_backfill and meta.get('checked_through') == str(self.end.date()) and completed >= last_completed_date())):
+            if not force and (not update or (not needs_backfill and meta.get('checked_through') == str(self.end.date()) and completed >= self._latest_completed_session())):
                 self.outcome(ticker, kind, 'cached')
                 return None
             # One final completed bar detects a changed adjustment basis. Include
@@ -113,8 +114,19 @@ class Downloader:
             start = confirmed[-1] if len(confirmed) else old.index[-1]
         else:
             start = self.start
-            coverage_start, completed = self.start, last_completed_date()
+            coverage_start, completed = self.start, pd.Timestamp('1900-01-01')
         return PricePlan(ticker, kind, path, old, start, coverage_start, completed)
+
+    @staticmethod
+    def _confirmed_price_date(frame):
+        valid = frame.index[(frame.index <= last_completed_date()) & frame.Close.gt(0) & frame['Adj Close'].gt(0)]
+        return valid[-1] if len(valid) else pd.Timestamp('1900-01-01')
+
+    @staticmethod
+    def _latest_completed_session():
+        end = last_completed_date()
+        sessions = exchange_sessions(str((end - pd.Timedelta(days=31)).date()), str(end.date()))
+        return sessions[-1]
 
     @staticmethod
     def _basis_changed(old: pd.DataFrame, new: pd.DataFrame, completed_through=None) -> bool:
@@ -186,10 +198,16 @@ class Downloader:
                                         mode = 'history_backfill'
                                 combined = pd.concat([old, new]) if old is not None else new
                                 combined = normalize_prices(combined)
+                                # An old intraday tail does not become confirmed merely
+                                # because the clock passed 16:00: require a fresh bar.
+                                completed = self._confirmed_price_date(new)
+                                if old is not None:
+                                    completed = max(plan.completed_through, completed)
+                                completed = min(completed, self._confirmed_price_date(combined))
                                 atomic_parquet(combined, path)
                                 self.manifest[f'{pkind}:{ticker}'] = {
                                     'requested_start': str(min(self.start, plan.coverage_start).date()), 'checked_through': str(self.end.date()),
-                                    'completed_through': str(last_completed_date().date()),
+                                    'completed_through': str(completed.date()),
                                     'first_bar': str(combined.index[0].date()), 'last_bar': str(combined.index[-1].date()),
                                     'last_download_mode': mode,
                                     'price_basis': 'yahoo_split_adjusted', 'volume_basis': 'yahoo_split_adjusted'}

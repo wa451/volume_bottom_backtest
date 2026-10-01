@@ -290,6 +290,87 @@ def test_market_snapshot_and_restore(web):
     assert price.read_bytes() == original
 
 
+def test_interrupted_market_restore_can_be_retried(web, monkeypatch):
+    client, db, c, body = web
+    storage = Storage(c)
+    backup_market(c, db, storage)
+    price = c.data_root / "data/market/7203.T.parquet"
+    original = price.read_bytes()
+    price.unlink()
+    def interrupted_copy(source, target):
+        Path(target).write_bytes(b"partial")
+        raise OSError("interrupted copy")
+    with monkeypatch.context() as m:
+        m.setattr("backend.app.market.shutil.copyfile", interrupted_copy)
+        with pytest.raises(OSError, match="interrupted copy"):
+            restore_market(c, db, storage)
+    assert not price.exists()
+    assert not list(price.parent.glob(price.name + ".*.tmp"))
+    restore_market(c, db, storage)
+    assert price.read_bytes() == original
+
+
+def test_short_market_restore_is_rejected_and_can_be_retried(web, monkeypatch):
+    client, db, c, body = web
+    storage = Storage(c)
+    backup_market(c, db, storage)
+    price = c.data_root / "data/market/7203.T.parquet"
+    original = price.read_bytes()
+    price.unlink()
+    with monkeypatch.context() as m:
+        m.setattr("backend.app.market.shutil.copyfile", lambda source, target: Path(target).write_bytes(b"partial"))
+        with pytest.raises(ValueError, match="size mismatch"):
+            restore_market(c, db, storage)
+    assert not price.exists()
+    assert not list(price.parent.glob(price.name + ".*.tmp"))
+    restore_market(c, db, storage)
+    assert price.read_bytes() == original
+
+
+@pytest.mark.parametrize("bad_shares", ["wrong_columns", "corrupt_parquet"])
+def test_bad_shares_preserve_all_results_and_quality_report(web, bad_shares):
+    from src.backtest import prepare_features
+    from src.utils import load_config
+
+    client, db, c, body = web
+    worker = Worker(c, db)
+    baseline_id = client.post("/api/backtests", json=body).json()["job_id"]
+    assert worker.run_once()
+    baseline = client.get("/api/backtests/" + baseline_id + "/trades?search=Toyota").json()
+    assert baseline["total"] > 0
+    path = c.data_root / "data/shares/7203.T.parquet"
+    original = path.read_bytes()
+    if bad_shares == "wrong_columns":
+        pd.DataFrame({"wrong_column": [2e8]}, index=pd.to_datetime(["2023-05-01"])).to_parquet(path)
+    else:
+        path.write_bytes(b"broken parquet")
+    engine = load_config(c.config_path)
+    fresh = prepare_features(c.data_root, "7203.T", engine)
+    cached = prepare_features(c.data_root, "7203.T", engine)
+    assert fresh.attrs["shares_cache_error"]
+    assert cached.attrs["shares_cache_error"] == fresh.attrs["shares_cache_error"]
+    jid = client.post("/api/backtests", json=body).json()["job_id"]
+    assert worker.run_once()
+    job = client.get("/api/jobs/" + jid).json()
+    assert job["status"] == "completed", job["error_message"]
+    quality = job["summary"]["quality"]
+    assert quality["price_success_count"] == 3
+    assert quality["shares_success_count"] == 2
+    assert quality["shares_cache_error_count"] == 1
+    endpoint = "/api/backtests/" + jid
+    trades = client.get(endpoint + "/trades?search=Toyota").json()
+    assert trades["total"] == baseline["total"]
+    assert [x["return"] for x in trades["items"]] == [x["return"] for x in baseline["items"]]
+    assert all(x["market_cap"] is None and x["market_cap_missing_reason"] == "invalid_shares_cache" for x in trades["items"])
+    assert client.get(endpoint + "/trades?search=Toyota&market_cap_group=small").json()["total"] == 0
+    report = client.get(endpoint + "/files/data_quality_report.md")
+    assert report.status_code == 200 and "invalid_shares_cache" in report.text
+    path.write_bytes(original)
+    repaired = prepare_features(c.data_root, "7203.T", engine)
+    assert repaired.attrs["shares_cache_error"] == ""
+    assert repaired.market_cap.notna().any()
+
+
 def test_update_is_separate_and_retry_uses_persistent_failures(web, monkeypatch):
     client, db, c, body = web
     calls = []

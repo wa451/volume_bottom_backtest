@@ -5,6 +5,7 @@ import pandas as pd
 from .optimizer import aggregate_results, select_candidates, evaluate_candidates
 from .visualization import generate_heatmaps
 from .utils import read_json, fingerprint, atomic_json
+from .data_loader import normalize_shares
 
 LIMITATIONS = '''- **Survivorship Bias**: 現在上場している国内普通株のみ。過去の倒産・上場廃止銘柄は含まず、長期成績を良く見せる可能性がある。
 - JPX は直近公表月末のスナップショット。市場区分・業種は現在マスターの属性で、過去時点の市場区分ではない。
@@ -30,12 +31,16 @@ def quality_report(root: Path, trades: pd.DataFrame, c: dict) -> dict:
     shares_count = 0
     for ticker in q.ticker:
         p = root / f'data/shares/{ticker}.parquet'
-        if p.exists() and not pd.read_parquet(p).empty:
-            shares_count += 1
+        if p.exists():
+            try:
+                shares_count += int(not normalize_shares(pd.read_parquet(p)).empty)
+            except (ValueError, OSError, KeyError):
+                pass  # Bad shares must not prevent reporting valid price results.
     cap_count = int(events.market_cap.notna().sum())
     trade_cap_count = int(complete.market_cap.notna().sum())
     quality = {'universe_count': len(q), 'price_success_count': int(q.price_success.sum()),
                'price_failure_or_missing_count': int((~q.price_success).sum()), 'shares_success_count': shares_count,
+               'shares_cache_error_count': int(q.shares_error.notna().sum()) if 'shares_error' in q else 0,
                'unique_signal_count': len(events), 'market_cap_covered_signals': cap_count,
                'market_cap_signal_coverage': cap_count / len(events) if len(events) else None,
                'completed_trade_count': len(complete), 'market_cap_trade_coverage': trade_cap_count / len(complete) if len(complete) else None,
@@ -53,7 +58,8 @@ def quality_report(root: Path, trades: pd.DataFrame, c: dict) -> dict:
              f'- JPX 更新エラー: {source.get("last_refresh_error", "なし")}',
              f'- 価格取得成功率（有効ローカルキャッシュ）: {percent(quality["price_success_count"], len(q))}',
              f'- 価格取得失敗・未取得数: {quality["price_failure_or_missing_count"]:,}',
-             f'- 株式数取得成功率（空でないキャッシュ）: {percent(shares_count, len(q))}',
+             f'- 株式数取得成功率（有効かつ空でないキャッシュ）: {percent(shares_count, len(q))}',
+             f'- 株式数キャッシュ異常数（価格分析は継続）: {quality["shares_cache_error_count"]:,}',
              f'- Historical Market Cap 算出率（重複除去したシグナル）: {percent(cap_count, len(events))}',
              f'- Historical Market Cap 算出率（集計対象取引）: {percent(trade_cap_count, len(complete))}',
              f'- 分割イベント数（取得期間全体）: {quality["split_events"]:,}',
