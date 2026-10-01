@@ -16,7 +16,7 @@ from .benchmark import load_benchmarks, benchmark_return
 
 log = logging.getLogger(__name__)
 TRADE_COLUMNS = ['code', 'ticker', 'company_name', 'market_segment', 'sector', 'signal_date',
-                 'drawdown_threshold', 'volume_ratio_threshold', 'actual_drawdown', 'actual_volume_ratio',
+                 'signal_price', 'drawdown_threshold', 'volume_ratio_threshold', 'actual_drawdown', 'actual_volume_ratio',
                  'rolling_high_252', 'average_volume_20', 'entry_date', 'entry_price', 'raw_entry_price',
                  'adjusted_entry_price', 'holding_period', 'exit_date', 'exit_price', 'raw_exit_price',
                  'adjusted_exit_price', 'return', 'gross_return', 'historical_shares', 'shares_date',
@@ -41,6 +41,9 @@ def ticker_trades(features: pd.DataFrame, info: dict, c: dict, benchmarks=None):
     df = features.loc[:end]
     analysis_mask = (df.index >= pd.Timestamp(c['data']['start_date'])) & (df.index <= end)
     valid_bar = df['Adj Close'].gt(0) & df['Volume'].gt(0)
+    cap_groups = c.get('analysis', {}).get('market_cap_groups', ['ALL'])
+    if 'ALL' not in cap_groups:
+        valid_bar = valid_bar & df.market_cap_group.isin(cap_groups)
     rows, excluded = [], 0
     for dd, vr in product(s['drawdown_thresholds'], s['volume_ratio_thresholds']):
         mask = signal_mask(df, dd, vr) & analysis_mask & valid_bar
@@ -82,7 +85,8 @@ def ticker_trades(features: pd.DataFrame, info: dict, c: dict, benchmarks=None):
                     net = exit_price / entry_price - 1
                     bench_ticker, bench_return = benchmark_return(benchmarks, entry_date, exit_date)
                 rows.append({**{key: info[key] for key in ('code', 'ticker', 'company_name', 'market_segment', 'sector')},
-                             'signal_date': signal_date, 'drawdown_threshold': dd, 'volume_ratio_threshold': vr,
+                             'signal_date': signal_date, 'signal_price': signal['Raw Close'],
+                             'drawdown_threshold': dd, 'volume_ratio_threshold': vr,
                              'actual_drawdown': signal.drawdown, 'actual_volume_ratio': signal.volume_ratio,
                              'rolling_high_252': signal.rolling_high_252, 'average_volume_20': signal.average_volume_20,
                              'entry_date': entry_date, 'entry_price': entry_price, 'raw_entry_price': raw_entry,
@@ -119,10 +123,12 @@ def prepare_features(root: Path, ticker: str, c: dict):
     return df
 
 
-def run_backtest(root: Path, universe: pd.DataFrame, c: dict):
+def run_backtest(root: Path, universe: pd.DataFrame, c: dict, progress=None):
     frames, quality = [], []
     benchmarks = load_benchmarks(root, c)
-    for info in tqdm(universe.to_dict('records'), desc='backtest'):
+    for number, info in enumerate(tqdm(universe.to_dict('records'), desc='backtest')):
+        if progress:
+            progress(number, len(universe), info['ticker'])
         ticker = info['ticker']
         q = {**info, 'price_success': False, 'shares_success': False, 'split_events': 0,
              'missing_cells': 0, 'repaired_rows': 0, 'repair_flag_available': False,
@@ -154,6 +160,8 @@ def run_backtest(root: Path, universe: pd.DataFrame, c: dict):
             log.warning('Cannot analyze %s: %s', ticker, e)
         quality.append(q)
     trades = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=TRADE_COLUMNS)
+    if progress:
+        progress(len(universe), len(universe), '取引の保存')
     dest = root / 'results'
     atomic_parquet(trades, dest / 'trades.parquet')
     trades.to_csv(dest / 'trades.csv', index=False)

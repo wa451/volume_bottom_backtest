@@ -1,0 +1,47 @@
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: backtests
+      POSTGRES_USER: backtests
+      POSTGRES_PASSWORD: local-development-only
+    volumes: [database:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U backtests]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    build: .
+    environment: &backend-env
+      DATABASE_URL: postgresql+psycopg://backtests:local-development-only@database:5432/backtests
+      WEB_DATA_ROOT: /var/backtest
+      STORAGE_BACKEND: local
+      STORAGE_DIR: /var/backtest/data/web/storage
+      ARTIFACT_CACHE_DIR: /var/backtest/data/web/artifact-cache
+    volumes: &backend-volumes
+      - .:/var/backtest
+    ports: [127.0.0.1:8000:8000]
+    depends_on:
+      database: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  worker:
+    build: .
+    command: [python, -m, backend.worker.main]
+    environment: *backend-env
+    volumes: *backend-volumes
+    depends_on:
+      api: {condition: service_healthy}
+  frontend:
+    build: frontend
+    environment:
+      BACKEND_URL: http://api:8000
+    ports: [127.0.0.1:3000:3000]
+    depends_on:
+      api: {condition: service_healthy}
+volumes:
+  database:

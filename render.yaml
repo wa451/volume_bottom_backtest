@@ -1,0 +1,50 @@
+# Set all sync:false values in Render. Use one shared environment group.
+services:
+  - type: web
+    name: volume-bottom-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    envVars: &backend-env
+      - key: WEB_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: API_TOKEN
+        sync: false
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: STORAGE_BUCKET
+        value: backtests
+  - type: worker
+    name: volume-bottom-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python -m backend.worker.main
+    plan: starter
+    disk:
+      name: market-data
+      mountPath: /var/backtest
+      sizeGB: 20
+    envVars:
+      - key: WEB_DATA_ROOT
+        value: /var/backtest
+      - key: WEB_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: API_TOKEN
+        sync: false
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: STORAGE_BUCKET
+        value: backtests

@@ -45,6 +45,7 @@ def quality_report(root: Path, trades: pd.DataFrame, c: dict) -> dict:
                'repaired_rows': int(q.repaired_rows.sum()),
                'excluded_signal_parameter_pairs': int(q.excluded_signal_parameter_pairs.sum()),
                'boundary_purged': int(trades.trade_status.eq('boundary_purged').sum()),
+               'invalid_price': int(trades.trade_status.eq('invalid_price').sum()),
                'incomplete': int(trades.trade_status.eq('incomplete').sum())}
     lines = ['# データ品質レポート', '', f'- 対象銘柄数（今回の選択範囲）: {len(q):,}',
              f'- JPX マスター全体: {source.get("total_domestic_ordinary_stocks", "手動CSV / 不明")}',
@@ -88,13 +89,13 @@ def table(frame, columns, limit=10):
     return '\n'.join(lines)
 
 
-def analyze(root: Path, c: dict):
+def analyze(root: Path, c: dict, *, intersections=False, full=False, progress=None):
     folder = root / 'results'
     run = read_json(folder / 'run.json')
     if not run or run['config_fingerprint'] != fingerprint(c):
         raise ValueError('Config differs from the saved backtest. Run backtest again before analyze.')
     trades = pd.read_parquet(folder / 'trades.parquet')
-    results = aggregate_results(trades, c)
+    results = aggregate_results(trades, c, intersections=intersections, full=full, progress=progress)
     results.to_csv(folder / 'parameter_results.csv', index=False)
     results[results.market_segment.eq('ALL') & ~results.market_cap_group.eq('ALL')].to_csv(folder / 'market_cap_comparison.csv', index=False)
     results[~results.market_segment.eq('ALL')].to_csv(folder / 'market_segment_comparison.csv', index=False)

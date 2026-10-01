@@ -30,8 +30,9 @@ class PricePlan:
 
 class Downloader:
     """Writes each successful ticker immediately; logs remain valid after interruption."""
-    def __init__(self, root: Path, config: dict):
+    def __init__(self, root: Path, config: dict, progress=None):
         self.root, self.c = root, config
+        self.progress = progress
         if any(config['data'].get(k, 'yahoo_split_adjusted') != 'yahoo_split_adjusted' for k in ('price_basis', 'volume_basis')):
             raise ValueError('yfinance download requires yahoo_split_adjusted bases; raw is only for manually imported caches')
         self.manifest_path = root / 'data/download_manifest.json'
@@ -65,6 +66,8 @@ class Downloader:
         pd.DataFrame(list(self.failures.values()), columns=cols).to_csv(temp, index=False)
         temp.replace(self.failure_path)
         atomic_json(self.status, self.root / 'results/logs/download_last_run.json')
+        if self.progress:
+            self.progress(row, len(self.status))
 
     def _request(self, tickers: list[str], start: pd.Timestamp, end: pd.Timestamp | None = None) -> pd.DataFrame:
         end = self.end if end is None else end

@@ -1,5 +1,24 @@
 # 日本株・底値出来高急増戦略バックテスト
 
+## Web版（Next.js / FastAPI / 独立Worker）
+
+ブラウザから条件を設定し、保存済みデータでバックテストを実行できます。Dashboard、差分データ更新、実行履歴、進捗、ヒートマップ、時価総額・市場別比較、Train固定候補のTest評価、取引検索、CSV、再実行を追加しました。CLIと同じ `src/` の計算を使います。
+
+[Web版の起動・環境変数・配置・操作手順](docs/WEB.md) / [Web検証結果](WEB_VERIFICATION.md)
+
+```bash
+uv pip install --python .venv/bin/python -r backend/requirements.lock.txt
+npm --prefix frontend ci
+# 以下はそれぞれ別ターミナル
+.venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python -m backend.worker.main
+npm --prefix frontend run dev
+```
+
+<http://127.0.0.1:3000> を開き、`市場データ` → `新規バックテスト` の順に操作します。ローカルはSQLite＋Local Storage、本番はPostgreSQL＋Supabase/S3に対応します。PostgreSQLを含むローカル一括起動は `docker compose up --build`。公開用は `render.yaml`、`frontend/vercel.json` と環境変数例を参照してください。
+
+バックテスト時はYahoo/JPXへ接続しません。取得済みデータは自動再利用し、データ更新ジョブだけが不足期間を取得します。価格未取得銘柄・欠損時価総額は品質に記録します。実デプロイにはVercel・Render・Supabaseのアカウントと認証情報が必要です。
+
 現在の東証国内普通株（Prime / Standard / Growth）を対象に、過去252営業日高値からの下落と、過去20営業日平均に対する出来高増加を検証する Python CLI です。RSI・業績・財務指標等を売買条件に加えません。
 
 初期値は下落率 20/30/40/50/60%、出来高倍率 1.5/2/3/4/5 倍の **25条件**、保有期間 20/60/120/250 営業日。Primary は各シグナルの Forward Return を比較する **Event Study** です。

@@ -7,20 +7,27 @@ PARAMETERS = ['drawdown_threshold', 'volume_ratio_threshold', 'holding_period']
 GROUP_KEYS = ['period_type', 'market_cap_group', 'market_segment']
 
 
-def aggregate_results(trades: pd.DataFrame, c: dict) -> pd.DataFrame:
+def aggregate_results(trades: pd.DataFrame, c: dict, *, intersections=False, full=False, progress=None) -> pd.DataFrame:
     eligible = trades[trades.trade_status.eq('complete')].copy()
     scopes = [('ALL', 'ALL', eligible)]
     scopes += [(b['name'], 'ALL', eligible[eligible.market_cap_group.eq(b['name'])]) for b in c['market_cap_bins']]
     scopes += [('ALL', m, eligible[eligible.market_segment.eq(m)]) for m in c['universe']['markets']]
+    if intersections:
+        scopes += [(b['name'], m, eligible[eligible.market_cap_group.eq(b['name']) & eligible.market_segment.eq(m)])
+                   for b in c['market_cap_bins'] for m in c['universe']['markets']]
     rows = []
     s = c['strategy']
+    periods = ('train', 'test', 'full') if full else ('train', 'test')
+    total = len(scopes) * len(periods) * len(s['drawdown_thresholds']) * len(s['volume_ratio_thresholds']) * len(s['holding_periods'])
     for cap, market, scoped in scopes:
         grouped = {key: frame for key, frame in scoped.groupby(['period_type'] + PARAMETERS)}
-        for period, dd, vr, h in product(('train', 'test'), s['drawdown_thresholds'], s['volume_ratio_thresholds'], s['holding_periods']):
-            subset = grouped.get((period, dd, vr, h), eligible.iloc[:0])
+        for period, dd, vr, h in product(periods, s['drawdown_thresholds'], s['volume_ratio_thresholds'], s['holding_periods']):
+            subset = pd.concat([grouped.get((p, dd, vr, h), eligible.iloc[:0]) for p in ('train', 'test')]) if period == 'full' else grouped.get((period, dd, vr, h), eligible.iloc[:0])
             rows.append({'period_type': period, 'market_cap_group': cap, 'market_segment': market,
                          'drawdown_threshold': dd, 'volume_ratio_threshold': vr, 'holding_period': h,
                          **calculate_metrics(subset, c['validation'])})
+            if progress and (len(rows) % 25 == 0 or len(rows) == total):
+                progress(len(rows), total, f'{period} / {cap} / {market}')
     return add_robustness(pd.DataFrame(rows), c)
 
 

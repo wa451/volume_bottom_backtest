@@ -49,6 +49,7 @@ def calculate_metrics(trades: pd.DataFrame, validation: dict) -> dict:
     metrics.update(num_trades=n, num_tickers=int(finite.ticker.nunique()),
                    insufficient_sample=n < validation['minimum_trades'],
                    bootstrap_ci_available=bool(np.isfinite(metrics['ci95_lower'])))
+    metrics['num_signals'] = len(finite.drop_duplicates(['ticker', 'signal_date'])) if 'signal_date' in finite else n
     metrics['benchmark_coverage'] = float(finite.benchmark_return.notna().mean()) if n and 'benchmark_return' in finite else np.nan
     metrics['mean_excess_return'] = finite.excess_return.mean() if n and 'excess_return' in finite else np.nan
     return metrics

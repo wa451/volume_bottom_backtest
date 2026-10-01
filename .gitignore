@@ -9,3 +9,16 @@ data/universe/jpx_source.*
 data/universe/universe.csv
 results/
 .run.lock
+node_modules/
+.next/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+!*.env.example
+data/web/
+data/*.sqlite*
+playwright-report/
+test-results/
+
+frontend/next-env.d.ts
