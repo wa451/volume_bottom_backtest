@@ -4,8 +4,8 @@ __pycache__/
 *.pyc
 data/*/*.parquet
 data/*/*.json
+data/download_manifest.json
 data/universe/jpx_source.*
 data/universe/universe.csv
 results/
 .run.lock
-

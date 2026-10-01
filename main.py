@@ -27,7 +27,9 @@ def parser():
             cmd.add_argument('--tickers', nargs='+', help='Codes or Yahoo .T tickers from master')
             cmd.add_argument('--manual-universe', action='store_true', help='Use local CSV; do not fetch JPX')
         if name in ('download', 'all'):
-            cmd.add_argument('--update', action='store_true')
+            update = cmd.add_mutually_exclusive_group()
+            update.add_argument('--update', action='store_true', default=True, help='Update cached data incrementally (default)')
+            update.add_argument('--no-update', action='store_false', dest='update', help='Reuse existing caches without updating; fetch only missing tickers')
             cmd.add_argument('--retry-failed', action='store_true')
             cmd.add_argument('--refresh-universe', action='store_true')
     return p
