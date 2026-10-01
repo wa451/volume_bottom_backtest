@@ -1,15 +1,18 @@
 "use client";
 import { useState } from "react";
 import { useApi, query } from "@/lib/api";
-import { Metrics, Page } from "@/lib/types";
-import { pct, number, cap, capLabels } from "@/lib/format";
+import { Metrics, Page, MarketCapBin } from "@/lib/types";
+import { pct, number, cap } from "@/lib/format";
 import { ErrorBox, Empty } from "./common";
+import { MarketCapLabel } from "./market-cap";
 export default function Trades({
   id,
+  bins,
   filters,
   compact = false,
 }: {
   id: string;
+  bins: MarketCapBin[];
   filters: Record<string, string | number>;
   compact?: boolean;
 }) {
@@ -130,8 +133,10 @@ export default function Trades({
                   <td>{number(r.actual_volume_ratio, 2)}x</td>
                   <td>{cap(r.market_cap)}</td>
                   <td>
-                    {capLabels[String(r.market_cap_group)] ||
-                      r.market_cap_group}
+                    <MarketCapLabel
+                      group={String(r.market_cap_group)}
+                      bins={bins}
+                    />
                   </td>
                   <td>{day(r.entry_date)}</td>
                   <td>{number(r.entry_price, 2)}</td>

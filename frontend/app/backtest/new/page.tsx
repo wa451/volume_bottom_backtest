@@ -3,12 +3,13 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, useApi } from "@/lib/api";
-import { Config, Market } from "@/lib/types";
-import { capLabels, number } from "@/lib/format";
+import { Config, Market, MarketCapBin } from "@/lib/types";
+import { number } from "@/lib/format";
 import { ErrorBox, Empty, Notice } from "@/components/common";
+import { MarketCapLabel } from "@/components/market-cap";
 type Defaults = {
   config: Config;
-  market_cap_bins: { name: string; min: number; max: number | null }[];
+  market_cap_bins: MarketCapBin[];
   minimum_trades: number;
 };
 export default function NewPage() {
@@ -239,14 +240,12 @@ function BacktestForm({ defaults }: { defaults: Defaults }) {
                       )
                     }
                   />
-                  {capLabels[x] || x}
+                  <MarketCapLabel group={x} bins={defaults.market_cap_bins} />
                 </label>
               ))}
             </div>
             <p className="check-note">
-              Micro &lt;100億 / Small 100〜500億 / Small-Mid 500〜1,000億 / Mid
-              1,000〜5,000億 / Large 5,000億〜1兆 / Mega
-              ≥1兆円。区分指定時は時価総額欠損シグナルを除外します。
+              各区分は下限以上・上限未満です。シグナル日当時の時価総額を使用し、区分指定時は時価総額欠損シグナルを除外します。
             </p>
             <div className="form-grid">
               <label>

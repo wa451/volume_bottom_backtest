@@ -1,11 +1,18 @@
 "use client";
 import { useState } from "react";
 import { useApi, query } from "@/lib/api";
-import { Job, Page, Result, Metrics } from "@/lib/types";
-import { pct, number, metric, metrics, capLabels } from "@/lib/format";
+import { Job, Page, Result, Metrics, MarketCapBin } from "@/lib/types";
+import {
+  pct,
+  number,
+  metric,
+  metrics,
+  capLabels,
+  marketCapRange,
+} from "@/lib/format";
 import { ErrorBox, Empty, Stat, Notice } from "./common";
 import Trades from "./trades";
-const caps = Object.keys(capLabels).filter((x) => x !== "missing");
+import { MarketCapLabel, MarketCapGuide } from "./market-cap";
 const metricKeys = [
   "mean_return",
   "median_return",
@@ -17,6 +24,8 @@ const metricKeys = [
 ];
 type Cell = { drawdown_threshold: number; volume_ratio_threshold: number };
 export default function Results({ job: j }: { job: Job }) {
+  const bins = j.market_cap_bins ?? [];
+  const caps = ["ALL", ...bins.map((b) => b.name)];
   const [tab, setTab] = useState("overview");
   const [period, setPeriod] = useState("train");
   const [holding, setHolding] = useState(j.config.holding_periods[0]);
@@ -220,13 +229,15 @@ export default function Results({ job: j }: { job: Job }) {
             {caps.map((x) => (
               <button
                 key={x}
+                aria-label={capLabels[x] || x}
+                title={marketCapRange(x, bins)}
                 className={cap === x ? "active" : ""}
                 onClick={() => {
                   setCap(x);
                   setOffset(0);
                 }}
               >
-                {capLabels[x]}
+                <MarketCapLabel group={x} bins={bins} />
               </button>
             ))}
           </div>
@@ -252,12 +263,16 @@ export default function Results({ job: j }: { job: Job }) {
             <p className="muted">
               市場 {j.config.markets.join(" / ")}　·　規模{" "}
               {j.config.market_cap_groups
-                .map((x) => capLabels[x] || x)
+                .map(
+                  (x) =>
+                    (capLabels[x] || x) + "（" + marketCapRange(x, bins) + "）",
+                )
                 .join(" / ")}
               　·　銘柄{" "}
               {j.config.tickers.length ? j.config.tickers.join(", ") : "全対象"}
               　·　Cooldown {j.config.cooldown}営業日
             </p>
+            <MarketCapGuide bins={bins} />
             <div className="quality-list">
               {Object.entries(overviewLabels).map(([key, label]) => (
                 <div key={key}>
@@ -430,7 +445,12 @@ export default function Results({ job: j }: { job: Job }) {
               )}
             </div>
           )}
-          <Trades id={j.id} filters={{ ...filters, ...cell }} compact />
+          <Trades
+            id={j.id}
+            bins={bins}
+            filters={{ ...filters, ...cell }}
+            compact
+          />
         </>
       )}
       {["cap", "market"].includes(tab) && (
@@ -440,6 +460,7 @@ export default function Results({ job: j }: { job: Job }) {
           <ErrorBox error={comparison.error} />
           {comparison.data ? (
             <ResultTable
+              bins={bins}
               rows={comparison.data.items}
               onSelect={(r) => {
                 setCap(r.market_cap_group);
@@ -498,6 +519,7 @@ export default function Results({ job: j }: { job: Job }) {
           <ErrorBox error={ranking.error} />
           {ranking.data ? (
             <ResultTable
+              bins={bins}
               rows={ranking.data.items}
               offset={offset}
               onSelect={(r) => {
@@ -535,7 +557,7 @@ export default function Results({ job: j }: { job: Job }) {
           <div className="panel">
             <ParameterPicker config={j.config} cell={cell} setCell={setCell} />
           </div>
-          <Trades id={j.id} filters={{ ...filters, ...cell }} />
+          <Trades id={j.id} bins={bins} filters={{ ...filters, ...cell }} />
         </>
       )}
       <Notice />
@@ -608,10 +630,12 @@ function ParameterPicker({
   );
 }
 function ResultTable({
+  bins,
   rows,
   onSelect,
   offset = 0,
 }: {
+  bins: MarketCapBin[];
   rows: Result[];
   onSelect: (r: Result) => void;
   offset?: number;
@@ -653,7 +677,9 @@ function ResultTable({
               </td>
               <td>{r.volume_ratio_threshold}x</td>
               <td>{r.holding_period}</td>
-              <td>{capLabels[r.market_cap_group] || r.market_cap_group}</td>
+              <td>
+                <MarketCapLabel group={r.market_cap_group} bins={bins} />
+              </td>
               <td>{r.market_segment}</td>
               <td>{number(r.num_signals)}</td>
               <td>

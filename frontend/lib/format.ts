@@ -1,3 +1,17 @@
+import type { MarketCapBin } from "./types";
+
+export function marketCapRange(group: string, bins: MarketCapBin[]): string {
+  if (group === "ALL") return "全規模（欠損を含む）";
+  if (group === "missing") return "当時の時価総額が不明";
+  const bin = bins.find((b) => b.name === group);
+  if (!bin) return "区分の定義なし";
+  const bound = (v: number) =>
+    v >= 1e12 ? number(v / 1e12, 6) + "兆円" : number(v / 1e8, 6) + "億円";
+  if (bin.min === 0 && bin.max !== null) return bound(bin.max) + "未満";
+  if (bin.max === null) return bound(bin.min) + "以上";
+  return bound(bin.min) + "以上〜" + bound(bin.max) + "未満";
+}
+
 export function pct(value: unknown, signed = true): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "—";
   return (signed && value > 0 ? "+" : "") + (value * 100).toFixed(2) + "%";

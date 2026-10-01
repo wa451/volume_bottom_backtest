@@ -113,5 +113,6 @@ def job_dict(s, job):
         "attempts": job.attempts,
         "summary": job.summary,
         "config": c.request,
+        "market_cap_bins": c.engine_config["market_cap_bins"],
         "artifacts": list(job.artifacts),
     }

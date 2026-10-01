@@ -418,3 +418,30 @@ def test_s3_storage_adapter_roundtrip(web, monkeypatch):
     source.write_text("example")
     key = storage.put(source, "runs/job/example.csv")
     assert storage.get(key).read_text() == "example"
+
+
+def test_existing_result_labels_use_frozen_market_cap_bins(web):
+    client, db, c, body = web
+    old_id = client.post("/api/backtests", json=body).json()["job_id"]
+    saved_bins = client.get("/api/jobs/" + old_id).json()["market_cap_bins"]
+    assert saved_bins[0]["max"] == 10000000000
+    current = yaml.safe_load(c.config_path.read_text())
+    current["market_cap_bins"][0]["max"] = 20000000000
+    current["market_cap_bins"][1]["min"] = 20000000000
+    c.config_path.write_text(yaml.safe_dump(current))
+    with TestClient(create_app(c)) as updated:
+        assert (
+            updated.get("/api/defaults").json()["market_cap_bins"][0]["max"]
+            == 20000000000
+        )
+        assert (
+            updated.get("/api/backtests/" + old_id).json()["market_cap_bins"]
+            == saved_bins
+        )
+        new_id = updated.post("/api/backtests", json=body).json()["job_id"]
+        assert (
+            updated.get("/api/jobs/" + new_id).json()["market_cap_bins"][0]["max"]
+            == 20000000000
+        )
+        rerun = updated.post("/api/backtests/" + old_id + "/rerun").json()["job_id"]
+        assert updated.get("/api/jobs/" + rerun).json()["market_cap_bins"] == saved_bins

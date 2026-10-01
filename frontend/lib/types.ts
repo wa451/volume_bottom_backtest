@@ -1,3 +1,4 @@
+export type MarketCapBin = { name: string; min: number; max: number | null };
 export type Config = {
   start_date: string;
   end_date: string;
@@ -41,6 +42,7 @@ export type Job = {
   error_message: string | null;
   attempts: number;
   config: Config;
+  market_cap_bins: MarketCapBin[];
   summary: {
     quality?: Record<string, number | null>;
     parameter_combinations?: number;

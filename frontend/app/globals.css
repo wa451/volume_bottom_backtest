@@ -711,3 +711,40 @@ a:focus-visible {
     padding: 18px 16px;
   }
 }
+
+.cap-label {
+  display: inline-block;
+  text-align: left;
+  line-height: 1.5;
+}
+.cap-label > span {
+  display: block;
+}
+.cap-label small {
+  display: block;
+  font-size: 10px;
+  opacity: 0.8;
+}
+.market-cap-guide {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8f9fb;
+}
+.market-cap-bands {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 20px;
+}
+.market-cap-bands > .cap-label {
+  font-size: 12px;
+}
+.scope-pills button {
+  padding: 7px 10px;
+}
+@media (max-width: 760px) {
+  .market-cap-bands {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
