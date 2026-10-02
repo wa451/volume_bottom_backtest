@@ -1,17 +1,19 @@
 from contextlib import asynccontextmanager
 from copy import deepcopy
 import secrets
+import json
 import httpx
 from botocore.exceptions import BotoCoreError, ClientError
 from typing import Annotated
 from fastapi import FastAPI, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select, func
-from src.utils import load_config
+from src.utils import load_config, fingerprint
 from .settings import Settings
 from .db import Database
 from .models import Job, Config, Result
 from .jobs import enqueue, job_dict
+from .analysis import analysis_request, latest_analysis
 from .schemas import BacktestRequest, UpdateRequest
 from .storage import Storage
 from .market import market_status
@@ -149,8 +151,8 @@ def create_app(settings=None):
         offset: int = Query(0, ge=0),
     ):
         with db.session() as s:
-            q = select(Job)
-            count = select(func.count()).select_from(Job)
+            q = select(Job).where(Job.kind != "analysis")
+            count = select(func.count()).select_from(Job).where(Job.kind != "analysis")
             if request.url.path.endswith("/backtests"):
                 q, count = (
                     q.where(Job.kind == "backtest"),
@@ -179,6 +181,53 @@ def create_app(settings=None):
             cfg = s.get(Config, old.id)
             body, engine = cfg.request, cfg.engine_config
         return {"job_id": enqueue(db, "backtest", body, engine, idempotency_key)}
+
+    @app.post("/api/backtests/{job_id}/analysis", status_code=202, dependencies=auth)
+    def start_analysis(job_id: str, retry: bool = False):
+        body = analysis_request(job_id, c)
+        with db.session() as s:
+            job(s, job_id, completed=True, backtest=True)
+            engine = s.get(Config, job_id).engine_config
+            old = latest_analysis(s, body)
+            if old and (old.status != "failed" or not retry):
+                return {"job_id": old.id}
+            previous = old.id if old else "first"
+        key = "analysis-" + fingerprint({**body, "previous": previous})
+        return {"job_id": enqueue(db, "analysis", body, engine, key)}
+
+    @app.get("/api/backtests/{job_id}/analysis", dependencies=auth)
+    def get_analysis(job_id: str):
+        with db.session() as s:
+            job(s, job_id, completed=True, backtest=True)
+            found = latest_analysis(s, analysis_request(job_id, c))
+            if not found:
+                return {"status": "not_started", "report": None}
+            result = {
+                "job_id": found.id,
+                "status": found.status,
+                "progress_percent": found.progress_percent,
+                "error_message": found.error_message,
+                "report": None,
+            }
+            key = (
+                found.artifacts.get("analysis.json")
+                if found.status == "completed"
+                else None
+            )
+        if key:
+            try:
+                result["report"] = json.loads(
+                    storage.get(key).read_text(encoding="utf-8")
+                )
+            except (
+                OSError,
+                ValueError,
+                httpx.HTTPError,
+                BotoCoreError,
+                ClientError,
+            ) as exc:
+                raise HTTPException(503, "分析ファイルを取得できません") from exc
+        return result
 
     @app.get("/api/backtests/{job_id}/results", dependencies=auth)
     def results(

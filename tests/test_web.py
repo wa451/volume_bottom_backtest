@@ -604,3 +604,58 @@ def test_kenmo_train_selection_does_not_change_when_test_prices_change(web):
     assert Worker(settings, db).run_once()
     revised = client.get(f'/api/backtests/{second}/strategy-results?period_type=train').json()['items']
     assert original == revised
+
+
+def test_durable_analysis_reuses_frozen_results_and_deduplicates(web, monkeypatch):
+    client, db, c, body = web
+    c.openai_api_key = ""
+    source = client.post("/api/backtests", json=body).json()["job_id"]
+    assert client.post(f"/api/backtests/{source}/analysis").status_code == 409
+    assert Worker(c, db).run_once()
+    before = client.get(f"/api/jobs/{source}").json()
+    assert client.get(f"/api/backtests/{source}/analysis").json()["status"] == "not_started"
+    def forbidden(*args, **kwargs): raise AssertionError("Analysis accessed market data")
+    monkeypatch.setattr("backend.worker.main.restore_market", forbidden)
+    monkeypatch.setattr("backend.worker.main.load_universe", forbidden)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ids = list(pool.map(lambda _: client.post(f"/api/backtests/{source}/analysis").json()["job_id"], range(2)))
+    assert ids[0] == ids[1]
+    assert client.get(f"/api/backtests/{source}/analysis").json()["status"] == "queued"
+    assert Worker(c, db).run_once()
+    result = client.get(f"/api/backtests/{source}/analysis").json()
+    assert result["status"] == "completed"
+    assert result["report"]["mode"] == "event_study"
+    assert result["report"]["source_job_id"] == source
+    assert result["report"]["generation"]["provider"] == "statistical"
+    assert client.post(f"/api/backtests/{source}/analysis").json()["job_id"] == ids[0]
+    assert client.get(f"/api/jobs/{source}").json() == before
+    assert all(x["kind"] != "analysis" for x in client.get("/api/jobs").json()["items"])
+    assert client.post("/api/backtests/not-found/analysis").status_code == 404
+
+
+def test_analysis_failure_retry_and_lease_fence(web, monkeypatch):
+    client, db, c, body = web
+    c.openai_api_key = ""
+    source = client.post("/api/backtests", json=body).json()["job_id"]
+    Worker(c, db).run_once()
+    original = __import__("backend.worker.main", fromlist=["write_analysis"]).write_analysis
+    def fail(*args): raise ValueError("保存結果の読取失敗")
+    monkeypatch.setattr("backend.worker.main.write_analysis", fail)
+    first = client.post(f"/api/backtests/{source}/analysis").json()["job_id"]
+    Worker(c, db).run_once()
+    assert client.get(f"/api/backtests/{source}/analysis").json()["status"] == "failed"
+    assert client.post(f"/api/backtests/{source}/analysis").json()["job_id"] == first
+    second = client.post(f"/api/backtests/{source}/analysis?retry=true").json()["job_id"]
+    assert second != first
+    assert client.post(f"/api/backtests/{source}/analysis?retry=true").json()["job_id"] == second
+    def lose_lease(*args):
+        result = original(*args)
+        with db.session.begin() as s:
+            s.get(Job, second).lease_owner = "replacement-worker"
+        return result
+    monkeypatch.setattr("backend.worker.main.write_analysis", lose_lease)
+    Worker(c, db).run_once()
+    with db.session() as s:
+        j = s.get(Job, second)
+        assert j.status != "completed"
+        assert not j.artifacts

@@ -39,6 +39,14 @@ class Settings:
             os.getenv("BACKTEST_CONFIG", str(ROOT / "config.yaml"))
         )
     )
+    openai_api_key: str = field(
+        default_factory=lambda: os.getenv("OPENAI_API_KEY", ""), repr=False
+    )
+    ai_analysis_model: str = field(
+        default_factory=lambda: os.getenv(
+            "AI_ANALYSIS_MODEL", "gpt-4.1-mini-2025-04-14"
+        )
+    )
     lease_seconds: int = 120
 
     def validate(self):

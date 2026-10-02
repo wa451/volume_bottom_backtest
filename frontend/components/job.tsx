@@ -7,7 +7,7 @@ import { Job } from "@/lib/types";
 import { number, dateTime, statusLabels } from "@/lib/format";
 import { Badge, ErrorBox, Empty, Notice } from "./common";
 import Results from "./results";
-import StrategyResults from "./strategy-results";
+import { PortfolioResultsTabs } from "./ai-analysis";
 export default function JobPage({ id }: { id: string }) {
   const { data: j, error } = useApi<Job>("jobs/" + id, 2000);
   const [clock, setClock] = useState(Date.now());
@@ -125,7 +125,7 @@ export default function JobPage({ id }: { id: string }) {
       {j.status === "completed" &&
         j.kind === "backtest" &&
         (j.summary.analysis_mode === "portfolio" ? (
-          <StrategyResults job={j} />
+          <PortfolioResultsTabs job={j} />
         ) : (
           <Results job={j} />
         ))}{" "}

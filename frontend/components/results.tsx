@@ -11,6 +11,7 @@ import {
   marketCapRange,
 } from "@/lib/format";
 import { ErrorBox, Empty, Stat, Notice } from "./common";
+import AIAnalysis from "./ai-analysis";
 import Trades from "./trades";
 import { MarketCapLabel, MarketCapGuide } from "./market-cap";
 const metricKeys = [
@@ -170,6 +171,7 @@ export default function Results({ job: j }: { job: Job }) {
           ["market", "市場別"],
           ["ranking", "パラメータ比較"],
           ["trades", "取引一覧"],
+          ["analysis", "AI分析"],
         ].map(([key, label]) => (
           <button
             role="tab"
@@ -182,7 +184,7 @@ export default function Results({ job: j }: { job: Job }) {
           </button>
         ))}
       </div>
-      {tab !== "overview" && (
+      {!["overview", "analysis"].includes(tab) && (
         <div className="panel">
           <div className="toolbar">
             <label>
@@ -291,6 +293,7 @@ export default function Results({ job: j }: { job: Job }) {
           </p>
         </div>
       )}
+      {tab === "analysis" && <AIAnalysis job={j} />}
       {tab === "overview" && (
         <>
           <div className="panel">
