@@ -41,8 +41,9 @@ def backup_market(settings, db, storage):
     )
     paths += [root / "data/download_manifest.json"]
     paths += [root / "results/logs/failed_tickers.csv"]
-    for folder in ("market", "shares", "benchmark"):
+    for folder in ("market", "shares", "benchmark", "earnings", "fundamentals"):
         paths += list((root / "data" / folder).glob("*.parquet"))
+        paths += list((root / "data" / folder).glob("*.json"))
     for path in paths:
         if not path.exists():
             continue
@@ -101,7 +102,16 @@ def sync_market(settings, db, universe, download_status=None):
                 m.update(shares_valid=not sh.empty, shares_rows=len(sh))
             except (ValueError, OSError, KeyError) as exc:
                 m["shares_error"] = str(exc)
-        for kind in ("price", "shares"):
+        for folder in ("earnings", "fundamentals"):
+            path = root / f"data/{folder}/{ticker}.parquet"
+            m[folder + "_rows"] = 0
+            m[folder + "_error"] = ""
+            if path.exists():
+                try:
+                    m[folder + "_rows"] = len(pd.read_parquet(path))
+                except (ValueError, OSError, KeyError) as exc:
+                    m[folder + "_error"] = str(exc)
+        for kind in ("price", "shares", "earnings", "fundamentals"):
             outcome = statuses.get((ticker, kind))
             if outcome and outcome["status"] == "failed":
                 m[kind + "_error"] = outcome["error"]
@@ -159,7 +169,7 @@ def market_status(db):
             "price_success_count": sum(bool(x.get("price_valid")) for x in items),
             "price_missing_count": sum(not x.get("price_valid") for x in items),
             "failure_count": sum(
-                bool(x.get("price_error") or x.get("shares_error")) for x in items
+                bool(x.get("price_error") or x.get("shares_error") or x.get("earnings_error") or x.get("fundamentals_error")) for x in items
             ),
             "shares_success_count": sum(bool(x.get("shares_valid")) for x in items),
             "shares_coverage": sum(bool(x.get("shares_valid")) for x in items) / count
@@ -173,7 +183,7 @@ def market_status(db):
                 "market_cap_signal_coverage"
             ),
             "last_backtest_id": latest.id if latest else None,
-            "last_backtest_stock_count": quality.get("universe_count"),
+            "last_backtest_stock_count": quality.get("universe_count", quality.get("stock_count")),
             "checked_at": state.value.get("checked_at") if state else None,
             "source": state.value.get("source", {}) if state else {},
             "items": items,

@@ -16,6 +16,9 @@ from .schemas import BacktestRequest, UpdateRequest
 from .storage import Storage
 from .market import market_status
 from .trades import TradeFilter, page, histogram, csv_chunks
+from . import strategy_results as portfolios
+from src.strategies import metadata
+from src.strategy_config import parameter_defaults
 
 SORTS = {
     "num_signals",
@@ -59,9 +62,11 @@ def create_app(settings=None):
             raise HTTPException(409, "ジョブはまだ完了していません")
         return j
 
-    def artifact(job_id, name):
+    def artifact(job_id, name, legacy=False):
         with db.session() as s:
             j = job(s, job_id, completed=True, backtest=True)
+            if legacy and j.summary.get("analysis_mode") == "portfolio":
+                raise HTTPException(409, "Portfolio結果はstrategy-results / strategy-trades APIで参照してください")
             key = j.artifacts.get(name)
         if not key:
             raise HTTPException(404, "ファイルが見つかりません")
@@ -99,7 +104,9 @@ def create_app(settings=None):
             markets=base["universe"]["markets"],
         )
         return {
-            "config": value,
+            "config": {**value, "costs": base["cost"]},
+            "strategies": metadata(),
+            "strategy_defaults": {key: parameter_defaults(key) for key in ("kenmo_breakout", "kenmo_earnings", "kenmo_growth")},
             "market_cap_bins": base["market_cap_bins"],
             "minimum_trades": base["validation"]["minimum_trades"],
         }
@@ -190,7 +197,9 @@ def create_app(settings=None):
         if sort not in SORTS or period_type not in ("train", "test", "full"):
             raise HTTPException(422, "並び順・期間が不正です")
         with db.session() as s:
-            job(s, job_id, completed=True, backtest=True)
+            j = job(s, job_id, completed=True, backtest=True)
+            if j.summary.get("analysis_mode") == "portfolio":
+                raise HTTPException(409, "Portfolio結果はstrategy-results APIで参照してください")
             q = select(Result).where(
                 Result.job_id == job_id, Result.period_type == period_type
             )
@@ -244,24 +253,52 @@ def create_app(settings=None):
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0),
     ):
-        return page(artifact(job_id, "trades.parquet"), filters, limit, offset)
+        return page(artifact(job_id, "trades.parquet", legacy=True), filters, limit, offset)
 
     @app.get("/api/backtests/{job_id}/distribution", dependencies=auth)
     def distribution(job_id: str, filters: Annotated[TradeFilter, Depends()]):
-        return histogram(artifact(job_id, "trades.parquet"), filters)
+        return histogram(artifact(job_id, "trades.parquet", legacy=True), filters)
 
     @app.get("/api/backtests/{job_id}/trades.csv", dependencies=auth)
     def trades_csv(job_id: str, filters: Annotated[TradeFilter, Depends()]):
         return StreamingResponse(
-            csv_chunks(artifact(job_id, "trades.parquet"), filters),
+            csv_chunks(artifact(job_id, "trades.parquet", legacy=True), filters),
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": 'attachment; filename="trades.csv"'},
         )
+
+    @app.get("/api/backtests/{job_id}/strategy-results", dependencies=auth)
+    def strategy_results(job_id: str, filters: Annotated[portfolios.StrategyFilter, Depends()],
+                         sort: str = "cagr", descending: bool = True,
+                         limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
+        if sort not in portfolios.SORTS:
+            raise HTTPException(422, "並び順が不正です")
+        return portfolios.result_page(artifact(job_id, "strategy_results.parquet"), filters, sort, descending, limit, offset)
+
+    @app.get("/api/backtests/{job_id}/strategy-curves", dependencies=auth)
+    def strategy_curves(job_id: str, filters: Annotated[portfolios.StrategyFilter, Depends()],
+                        limit: int = Query(10000, ge=1, le=20000), offset: int = Query(0, ge=0)):
+        if filters.parameter_id is None or filters.strategy_id is None:
+            raise HTTPException(422, "曲線は戦略とパラメータを指定してください")
+        return portfolios.artifact_page(artifact(job_id, "strategy_curves.parquet"), filters, limit, offset, curve=True)
+
+    @app.get("/api/backtests/{job_id}/strategy-trades", dependencies=auth)
+    def strategy_trades(job_id: str, filters: Annotated[portfolios.StrategyFilter, Depends()],
+                        limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
+        return portfolios.artifact_page(artifact(job_id, "trades.parquet"), filters, limit, offset)
+
+    @app.get("/api/backtests/{job_id}/strategy-trades.csv", dependencies=auth)
+    def strategy_trades_csv(job_id: str, filters: Annotated[portfolios.StrategyFilter, Depends()]):
+        return StreamingResponse(portfolios.trade_csv(artifact(job_id, "trades.parquet"), filters),
+            media_type="text/csv; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="strategy-trades.csv"'})
 
     @app.get("/api/backtests/{job_id}/files/{name}", dependencies=auth)
     def file(job_id: str, name: str):
         allowed = {
             "parameter_results.csv",
+            "strategy_results.csv",
+            "strategy_quality.csv",
+            "strategy_summary.json",
             "market_cap_comparison.csv",
             "market_segment_comparison.csv",
             "top_candidates_train.csv",

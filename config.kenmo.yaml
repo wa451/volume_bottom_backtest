@@ -1,0 +1,153 @@
+# Kenmo型比較の例。財務条件を過去へ遡及適用しません。
+data:
+  provider: yfinance
+  start_date: '2015-01-01'
+  end_date: null
+  interval: 1d
+  repair: true
+  price_basis: yahoo_split_adjusted
+  volume_basis: yahoo_split_adjusted
+  warmup_calendar_days: 550
+universe:
+  markets:
+  - Prime
+  - Standard
+  - Growth
+  ordinary_stocks_only: true
+  jpx_page: https://www.jpx.co.jp/markets/statistics-equities/misc/01.html
+download:
+  batch_size: 50
+  max_retries: 5
+  retry_backoff_seconds: 2
+  threads: 4
+  timeout_seconds: 30
+  shares_chunk_years: 2
+strategy:
+  rolling_high_days: 252
+  volume_average_days: 20
+  drawdown_thresholds:
+  - 0.2
+  - 0.3
+  - 0.4
+  - 0.5
+  - 0.6
+  volume_ratio_thresholds:
+  - 1.5
+  - 2.0
+  - 3.0
+  - 4.0
+  - 5.0
+  holding_periods:
+  - 20
+  - 60
+  - 120
+  - 250
+  signal_cooldown_days: 20
+market_cap_bins:
+- name: micro
+  min: 0
+  max: 10000000000
+- name: small
+  min: 10000000000
+  max: 50000000000
+- name: small_mid
+  min: 50000000000
+  max: 100000000000
+- name: mid
+  min: 100000000000
+  max: 500000000000
+- name: large
+  min: 500000000000
+  max: 1000000000000
+- name: mega
+  min: 1000000000000
+  max: null
+validation:
+  minimum_trades: 100
+  top_candidates: 5
+  bootstrap_samples: 2000
+  bootstrap_seed: 42
+  bootstrap_unit: ticker
+train:
+  start: '2015-01-01'
+  end: '2021-12-31'
+test:
+  start: '2022-01-01'
+  end: null
+cost:
+  buy_cost_rate: 0.0
+  sell_cost_rate: 0.0
+  slippage_rate: 0.0
+split_handling:
+  adjust_volume: true
+  exclude_if_adjustment_failed: true
+  exclusion_window_days: 20
+market_cap:
+  max_shares_age_days: 370
+  invalidate_shares_across_split: true
+benchmark:
+  enabled: true
+  tickers:
+  - ^TOPX
+  - ^N225
+output:
+  heatmaps: true
+  heatmap_metrics:
+  - mean_return
+  - median_return
+  - win_rate
+  - profit_factor
+  - trade_count
+  - expectancy
+  - bootstrap_ci_lower
+strategy_ids:
+- bottom_volume
+- kenmo_breakout
+- kenmo_earnings
+- kenmo_growth
+strategy_params:
+  kenmo_breakout:
+    mode: price_only
+    high_period:
+    - 252
+    volume_ratio:
+    - 1.5
+    stop_loss:
+    - 0.08
+    exit_modes:
+    - holding
+    - trailing
+    holding_period:
+    - 60
+    trailing_stop:
+    - 0.15
+  kenmo_earnings:
+    mode: price_only
+    entry_offset:
+    - 2
+    - 3
+    - 5
+    reaction_rate:
+    - 0.03
+    volume_ratio:
+    - 2
+    stop_loss:
+    - 0.08
+    exit_modes:
+    - holding
+    holding_period:
+    - 60
+  kenmo_growth:
+    mode: price_only
+    cap_min: 5000000000.0
+    cap_max: 30000000000.0
+    stop_loss:
+    - 0.08
+    exit_modes:
+    - holding
+    holding_period:
+    - 120
+portfolio:
+  initial_capital: 1000000
+  max_positions: 5
+  benchmark: ^N225

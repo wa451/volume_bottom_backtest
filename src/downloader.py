@@ -319,7 +319,7 @@ class Downloader:
             else:
                 self.outcome(ticker, 'shares', 'downloaded')
 
-    def run(self, universe, update=True, retry_failed=False):
+    def run(self, universe, update=True, retry_failed=False, include_strategy_data=False):
         tickers = universe.ticker.tolist()
         failed = set(self.failures)
         prices = [t for t in tickers if not retry_failed or (t, 'price') in failed]
@@ -331,4 +331,7 @@ class Downloader:
             if retry_failed:
                 benchmarks = [t for t in benchmarks if (t, 'benchmark') in failed]
             self.download_prices(benchmarks, kind='benchmark', update=update, force_tickers=benchmarks if retry_failed else ())
+        if include_strategy_data:
+            from .strategy_data import update_auxiliary
+            update_auxiliary(self.root, tickers, self.outcome, retry_failed, failed)
         return self.status

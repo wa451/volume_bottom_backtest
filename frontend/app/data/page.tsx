@@ -17,13 +17,18 @@ export default function DataPage() {
   const [onlyErrors, setOnlyErrors] = useState(false);
   const [tickers, setTickers] = useState("");
   const [start, setStart] = useState("2010-01-01");
+  const [strategyData, setStrategyData] = useState(false);
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const pending = useRef(false);
   const last = useRef({ body: "", key: "" });
   const rows = (m?.items || []).filter(
     (x) =>
-      (!onlyErrors || x.price_error || x.shares_error) &&
+      (!onlyErrors ||
+        x.price_error ||
+        x.shares_error ||
+        x.earnings_error ||
+        x.fundamentals_error) &&
       (x.ticker.toLowerCase().includes(search.toLowerCase()) ||
         x.company_name.includes(search)),
   );
@@ -37,6 +42,7 @@ export default function DataPage() {
       tickers: tickers.split(/[\s,、]+/).filter(Boolean),
       retry_failed: retry,
       refresh_universe: true,
+      include_strategy_data: strategyData,
     });
     if (last.current.body !== body)
       last.current = { body, key: crypto.randomUUID() };
@@ -123,6 +129,17 @@ export default function DataPage() {
             失敗分を再試行
           </button>
         </div>
+        <label>
+          <input
+            type="checkbox"
+            checked={strategyData}
+            onChange={(e) => setStrategyData(e.target.checked)}
+          />{" "}
+          決算日・財務スナップショットも差分更新（Kenmo用）
+        </label>
+        <p className="check-note">
+          決算日は既存履歴へ追加、財務は取得時点を保存します。財務の取得は過去の公表履歴を復元しません。通常は決算日1日・財務7日以内のキャッシュを再利用します。
+        </p>
         <p className="check-note">
           株価は最終確定行の確認と最新期間、株式数は取得済み期間の先を取得。調整基準が変わった銘柄は整合性のため履歴を再取得します。成功分は即時保存され、中断後も再利用します。全市場の初回取得は時間がかかります。
         </p>
@@ -177,6 +194,7 @@ export default function DataPage() {
                   <th>価格行</th>
                   <th>最終日</th>
                   <th>株式数行</th>
+                  <th>決算日 / 財務観測</th>
                   <th>取得方式</th>
                   <th>エラー</th>
                 </tr>
@@ -190,16 +208,25 @@ export default function DataPage() {
                     <td>{number(x.price_rows)}</td>
                     <td>{x.latest_date || "—"}</td>
                     <td>{number(x.shares_rows)}</td>
+                    <td>
+                      {number(x.earnings_rows)} / {number(x.fundamentals_rows)}
+                    </td>
                     <td>{x.download_mode || "既存 / 未取得"}</td>
                     <td
                       title={
-                        (x.price_error || "") + " " + (x.shares_error || "")
+                        (x.price_error || "") +
+                        " " +
+                        [x.shares_error, x.earnings_error, x.fundamentals_error]
+                          .filter(Boolean)
+                          .join(" / ")
                       }
                     >
                       {(
                         (x.price_error || "") +
                         " " +
-                        (x.shares_error || "")
+                        [x.shares_error, x.earnings_error, x.fundamentals_error]
+                          .filter(Boolean)
+                          .join(" / ")
                       ).slice(0, 100) || "—"}
                     </td>
                   </tr>

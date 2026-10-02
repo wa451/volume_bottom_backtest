@@ -9,6 +9,7 @@ test("時価総額を複数選択し、区分ごとのセル詳細・CSVと共�
   const job: Job = history.items.find(
     (j: Job) =>
       j.status === "completed" &&
+      j.summary.analysis_mode !== "portfolio" &&
       j.config.holding_periods.includes(60) &&
       j.config.drawdown_thresholds.includes(0.3) &&
       j.config.volume_ratio_thresholds.includes(3),
@@ -106,7 +107,9 @@ test("同じ値は区分が違っても同じ色になり、複数選択をタ�
   const history = await (await request.get("/api/backtests?limit=100")).json();
   const job: Job = history.items.find(
     (j: Job) =>
-      j.status === "completed" && j.config.drawdown_thresholds.length > 1,
+      j.status === "completed" &&
+      j.summary.analysis_mode !== "portfolio" &&
+      j.config.drawdown_thresholds.length > 1,
   );
   expect(job).toBeTruthy();
   const [dd, otherDd] = job.config.drawdown_thresholds;

@@ -6,7 +6,8 @@ test("時価総額区分の金額帯を既存結果・フィルタ・比較表�
 }) => {
   const history = await (await request.get("/api/backtests?limit=100")).json();
   const job = history.items.find(
-    (j: { status: string }) => j.status === "completed",
+    (j: { status: string; summary: { analysis_mode?: string } }) =>
+      j.status === "completed" && j.summary.analysis_mode !== "portfolio",
   );
   expect(job, "先にバックテストを1件完了してください").toBeTruthy();
   await page.goto("/backtests/" + job.id);

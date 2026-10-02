@@ -526,3 +526,81 @@ def test_existing_result_labels_use_frozen_market_cap_bins(web):
         )
         rerun = updated.post("/api/backtests/" + old_id + "/rerun").json()["job_id"]
         assert updated.get("/api/jobs/" + rerun).json()["market_cap_bins"] == saved_bins
+
+
+def test_kenmo_worker_immutable_artifacts_api_and_comparison(web):
+    client, db, settings, body = web
+    body.update(strategy_ids=['bottom_volume', 'kenmo_breakout', 'kenmo_growth', 'kenmo_earnings'],
+                strategy_params={'kenmo_breakout': {'high_enabled': False, 'volume_enabled': False, 'holding_period': [2]}, 'kenmo_growth': {'cap_min': 5e9, 'cap_max': 3e10, 'holding_period': [2]}})
+    response = client.post('/api/backtests', json=body)
+    assert response.status_code == 202, response.text
+    jid = response.json()['job_id']
+    assert client.get(f'/api/backtests/{jid}/strategy-results').status_code == 409
+    assert Worker(settings, db).run_once()
+    job = client.get('/api/jobs/' + jid).json()
+    assert job['status'] == 'completed', job['error_message']
+    assert job['summary']['analysis_mode'] == 'portfolio'
+    assert job['summary']['parameter_combinations'] == 11
+    assert not job['summary']['benchmark_available']
+    rows = client.get(f'/api/backtests/{jid}/strategy-results?period_type=train').json()['items']
+    assert len(rows) == 11 and {row['strategy_id'] for row in rows} == set(body['strategy_ids'])
+    grid = next(row for row in rows if row['strategy_id'] == 'kenmo_breakout')
+    assert isinstance(grid['parameters'], dict) and grid['num_trades'] > 0
+    query = f"strategy_id={grid['strategy_id']}&parameter_id={grid['parameter_id']}"
+    curves = client.get(f'/api/backtests/{jid}/strategy-curves?' + query).json()
+    assert curves['total'] > 0 and curves['items'][0]['equity'] > 0
+    trades = client.get(f'/api/backtests/{jid}/strategy-trades?' + query).json()
+    assert trades['items'] and trades['items'][0]['entry_reason'] and trades['items'][0]['exit_reason']
+    assert client.get(f'/api/backtests/{jid}/strategy-trades.csv?' + query).status_code == 200
+    assert client.get(f'/api/backtests/{jid}/files/strategy_results.csv').status_code == 200
+    assert client.get(f'/api/backtests/{jid}/strategy-results?sort=bad').status_code == 422
+    assert client.get(f'/api/backtests/{jid}/strategy-curves').status_code == 422
+    assert client.get(f'/api/backtests/{jid}/results').status_code == 409
+    assert client.get(f'/api/backtests/{jid}/trades').status_code == 409
+    assert client.get(f'/api/backtests/{jid}/strategy-results?period_type=bad').status_code == 422
+    # Minimum trade requirement: empty financial coverage cannot become a candidate.
+    earnings = [row for row in rows if row['strategy_id'] == 'kenmo_earnings']
+    assert earnings[0]['num_trades'] == 0 and not earnings[0]['train_selected']
+    with db.session() as session:
+        frozen = session.get(Config, jid).engine_config
+        assert frozen['strategy_ids'] == body['strategy_ids']
+        assert session.get(TradeArtifact, jid).num_rows > 0
+    rerun = client.post('/api/backtests/' + jid + '/rerun').json()['job_id']
+    with db.session() as session:
+        assert session.get(Config, rerun).engine_config == frozen
+
+
+def test_kenmo_request_validation_and_financial_defaults(web):
+    client, db, settings, body = web
+    body.update(strategy_ids=['kenmo_earnings'])
+    response = client.post('/api/backtests', json=body)
+    assert response.status_code == 202
+    with db.session() as session:
+        from src.strategy_config import parameter_grid
+        grid = parameter_grid(session.get(Config, response.json()['job_id']).engine_config)
+        assert grid[0]['parameters']['volume_ratio'] == 2
+    body['strategy_ids'] = ['bad']
+    assert client.post('/api/backtests', json=body).status_code == 422
+    body['strategy_ids'] = ['kenmo_breakout']
+    body['strategy_params'] = {'kenmo_breakout': {'mode': 'fundamentals', 'high_period': [120, 180, 252], 'volume_ratio': [1, 1.5, 2], 'revenue_growth': [.05, .1, .2], 'earnings_growth': [.1, .2, .3], 'roe': [.08, .1, .15], 'stop_loss': [.05, .08, .1, .15]}}
+    assert client.post('/api/backtests', json=body).status_code == 422
+
+
+def test_kenmo_train_selection_does_not_change_when_test_prices_change(web):
+    client, db, settings, body = web
+    body.update(strategy_ids=['kenmo_breakout'], strategy_params={'kenmo_breakout': {'high_enabled': False, 'volume_enabled': False, 'holding_period': [2, 5]}}, tickers=['7203'])
+    first = client.post('/api/backtests', json=body).json()['job_id']
+    assert Worker(settings, db).run_once()
+    original = client.get(f'/api/backtests/{first}/strategy-results?period_type=train').json()['items']
+    path = settings.data_root / 'data/market/7203.T.parquet'
+    prices = pd.read_parquet(path)
+    after_boundary = prices.index >= pd.Timestamp('2023-07-01')
+    for col in ['Open', 'High', 'Low', 'Close', 'Adj Close']:
+        prices.loc[after_boundary, col] *= 3
+    # Even a future missing monitoring bar cannot invalidate an earlier Train.
+    prices.loc['2023-07-07', 'Low'] = float('nan')
+    prices.to_parquet(path)
+    second = client.post('/api/backtests', json=body).json()['job_id']
+    assert Worker(settings, db).run_once()
+    revised = client.get(f'/api/backtests/{second}/strategy-results?period_type=train').json()['items']
+    assert original == revised

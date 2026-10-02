@@ -7,6 +7,7 @@ import { Job } from "@/lib/types";
 import { number, dateTime, statusLabels } from "@/lib/format";
 import { Badge, ErrorBox, Empty, Notice } from "./common";
 import Results from "./results";
+import StrategyResults from "./strategy-results";
 export default function JobPage({ id }: { id: string }) {
   const { data: j, error } = useApi<Job>("jobs/" + id, 2000);
   const [clock, setClock] = useState(Date.now());
@@ -121,7 +122,13 @@ export default function JobPage({ id }: { id: string }) {
           </Link>
         </div>
       )}
-      {j.status === "completed" && j.kind === "backtest" && <Results job={j} />}{" "}
+      {j.status === "completed" &&
+        j.kind === "backtest" &&
+        (j.summary.analysis_mode === "portfolio" ? (
+          <StrategyResults job={j} />
+        ) : (
+          <Results job={j} />
+        ))}{" "}
       {j.status === "completed" && j.kind === "update" && (
         <>
           <div className="panel">
@@ -138,7 +145,7 @@ export default function JobPage({ id }: { id: string }) {
               </div>
             </div>
             <p className="muted">
-              価格・株式数・ベンチマークごとの処理数です。個別失敗はキャッシュを保護して記録しています。
+              価格・株式数・ベンチマーク・選択した決算／財務データごとの処理数です。個別失敗はキャッシュを保護して記録しています。
             </p>
             <div className="csv-row">
               <Link className="button" href="/data">

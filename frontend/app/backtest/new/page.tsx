@@ -3,11 +3,14 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, useApi } from "@/lib/api";
-import { Config, Market, MarketCapBin } from "@/lib/types";
+import { Config, Market, MarketCapBin, StrategyParameters } from "@/lib/types";
 import { number } from "@/lib/format";
 import { ErrorBox, Empty, Notice } from "@/components/common";
 import { MarketCapLabel } from "@/components/market-cap";
+import StrategySettings from "@/components/strategy-settings";
+import { combinationCount, isPortfolio } from "@/lib/strategy";
 type Defaults = {
+  strategy_defaults: Record<string, StrategyParameters>;
   config: Config;
   market_cap_bins: MarketCapBin[];
   minimum_trades: number;
@@ -157,46 +160,67 @@ function BacktestForm({ defaults }: { defaults: Defaults }) {
               ))}
             </div>
             <p className="check-note">
-              TrainとTestは重複させず、分析期間内に設定してください。252営業日の指標準備期間を内部で確保します。Train終端をまたぐ取引は候補選択から除外します。
+              TrainとTestは重複させず、分析期間内に設定してください。252営業日の指標準備期間を内部で確保します。Bottom単独は境界取引を除外。戦略比較はTrain/Testを別資金で開始し、期間末未決済も評価します。
             </p>
           </div>
-          <div className="panel">
-            <h2>02　戦略パラメータ</h2>
-            <Choices
-              title="52週高値からの下落率"
-              options={defaults.config.drawdown_thresholds}
-              value={c.drawdown_thresholds}
-              onChange={(v) => set("drawdown_thresholds", v)}
-              label={(v) => Math.round(v * 100) + "%"}
-            />
-            <Choices
-              title="20日平均に対する出来高倍率"
-              options={defaults.config.volume_ratio_thresholds}
-              value={c.volume_ratio_thresholds}
-              onChange={(v) => set("volume_ratio_thresholds", v)}
-              label={(v) => v + "倍"}
-            />
-            <Choices
-              title="保有期間"
-              options={defaults.config.holding_periods}
-              value={c.holding_periods}
-              onChange={(v) => set("holding_periods", v)}
-              label={(v) => v + "営業日"}
-            />
-            <div className="form-grid">
+          <StrategySettings
+            config={c}
+            defaults={defaults.strategy_defaults}
+            onChange={setC}
+          />
+          {(c.strategy_ids || ["bottom_volume"]).includes("bottom_volume") && (
+            <div className="panel">
+              <h2>02　戦略パラメータ</h2>
+              <Choices
+                title="52週高値からの下落率"
+                options={defaults.config.drawdown_thresholds}
+                value={c.drawdown_thresholds}
+                onChange={(v) => set("drawdown_thresholds", v)}
+                label={(v) => Math.round(v * 100) + "%"}
+              />
+              <Choices
+                title="20日平均に対する出来高倍率"
+                options={defaults.config.volume_ratio_thresholds}
+                value={c.volume_ratio_thresholds}
+                onChange={(v) => set("volume_ratio_thresholds", v)}
+                label={(v) => v + "倍"}
+              />
+              <Choices
+                title="保有期間"
+                options={defaults.config.holding_periods}
+                value={c.holding_periods}
+                onChange={(v) => set("holding_periods", v)}
+                label={(v) => v + "営業日"}
+              />
+              <div className="form-grid">
+                <label>
+                  Cooldown（営業日）
+                  <input
+                    type="number"
+                    min="0"
+                    max="1000"
+                    required
+                    value={c.cooldown}
+                    onChange={(e) => set("cooldown", Number(e.target.value))}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+          {!(c.strategy_ids || ["bottom_volume"]).includes("bottom_volume") && (
+            <div className="panel">
               <label>
                 Cooldown（営業日）
                 <input
                   type="number"
                   min="0"
                   max="1000"
-                  required
                   value={c.cooldown}
                   onChange={(e) => set("cooldown", Number(e.target.value))}
                 />
               </label>
             </div>
-          </div>
+          )}
           <div className="panel">
             <h2>03　対象範囲</h2>
             <Choices
@@ -278,7 +302,15 @@ function BacktestForm({ defaults }: { defaults: Defaults }) {
           </div>
           <ErrorBox error={error} />
           <div className="submit-row">
-            <button className="primary" type="submit" disabled={busy}>
+            <button
+              className="primary"
+              type="submit"
+              disabled={
+                busy ||
+                combinationCount(c, defaults.strategy_defaults) === 0 ||
+                combinationCount(c, defaults.strategy_defaults) > 256
+              }
+            >
               {busy ? "ジョブ登録中…" : "バックテストを実行 →"}
             </button>
           </div>
@@ -286,20 +318,13 @@ function BacktestForm({ defaults }: { defaults: Defaults }) {
         <aside className="panel form-aside">
           <div className="eyebrow">EXPERIMENT SIZE</div>
           <strong>
-            {number(
-              c.drawdown_thresholds.length * c.volume_ratio_thresholds.length,
-            )}{" "}
+            {number(combinationCount(c, defaults.strategy_defaults))}{" "}
             <small style={{ fontSize: 13 }}>条件</small>
           </strong>
           <p>
-            × {c.holding_periods.length}保有期間
-            <br />={" "}
-            {number(
-              c.drawdown_thresholds.length *
-                c.volume_ratio_thresholds.length *
-                c.holding_periods.length,
-            )}
-            評価の組み合わせ
+            {isPortfolio(c) ? "資金配分を定義した戦略比較" : "既存Event Study"}
+            <br />
+            探索上限256組み合わせ
           </p>
           <hr style={{ border: 0, borderTop: "1px solid var(--line)" }} />
           <p>
@@ -309,12 +334,14 @@ function BacktestForm({ defaults }: { defaults: Defaults }) {
           </p>
           <p>
             最低取引数 {defaults.minimum_trades}件<br />
-            95% CI: 銘柄クラスタBootstrap
+            {isPortfolio(c)
+              ? "候補選択はTrainのみ"
+              : "95% CI: 銘柄クラスタBootstrap"}
           </p>
           <p>
             Entry: 翌営業日始値
             <br />
-            Exit: N営業日後終値
+            Exit: {isPortfolio(c) ? "選択した売却条件" : "N営業日後終値"}
             <br />
             価格: 配当・分割調整後
           </p>
@@ -323,7 +350,7 @@ function BacktestForm({ defaults }: { defaults: Defaults }) {
           </p>
         </aside>
       </div>
-      <Notice />
+      <Notice portfolio={isPortfolio(c)} />
     </form>
   );
 }

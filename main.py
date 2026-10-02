@@ -5,11 +5,13 @@ import logging
 from pathlib import Path
 import sys
 from filelock import FileLock, Timeout
-from src.utils import ROOT, load_config, init_dirs
+from src.utils import ROOT, load_config, init_dirs, read_json
 from src.universe import load_universe
 from src.downloader import Downloader
 from src.backtest import run_backtest
 from src.report import analyze
+from src.strategy_runner import run_strategies
+from src.strategy_config import portfolio_mode
 
 
 def parser():
@@ -30,6 +32,7 @@ def parser():
             update = cmd.add_mutually_exclusive_group()
             update.add_argument('--update', action='store_true', default=True, help='Update cached data incrementally (default)')
             update.add_argument('--no-update', action='store_false', dest='update', help='Reuse existing caches without updating; fetch only missing tickers')
+            cmd.add_argument('--strategy-data', action='store_true', help='Incrementally cache earnings dates and observed financial snapshots')
             cmd.add_argument('--retry-failed', action='store_true')
             cmd.add_argument('--refresh-universe', action='store_true')
     return p
@@ -44,6 +47,12 @@ def main(argv=None):
     try:
         with FileLock(root / '.run.lock', timeout=0):
             if args.command == 'analyze':
+                if portfolio_mode(c):
+                    summary = read_json(root / 'results/strategy_summary.json')
+                    if not summary:
+                        raise ValueError('戦略比較結果がありません。backtestを実行してください')
+                    print(summary)
+                    return 0
                 quality = analyze(root, c)
                 print(quality)
                 return 0
@@ -61,15 +70,18 @@ def main(argv=None):
                 u = u.head(args.limit)
             print(f'Selected universe: {len(u)} stocks')
             if download:
-                status = Downloader(root, c).run(u, update=args.update, retry_failed=args.retry_failed)
-                for kind in ('price', 'shares', 'benchmark'):
+                status = Downloader(root, c).run(u, update=args.update, retry_failed=args.retry_failed, include_strategy_data=args.strategy_data)
+                for kind in (('price', 'shares', 'benchmark', 'earnings', 'fundamentals') if args.strategy_data else ('price', 'shares', 'benchmark')):
                     selected = [r for r in status if r['kind'] == kind]
                     failed = sum(r['status'] == 'failed' for r in selected)
                     print(f'{kind}: {len(selected) - failed}/{len(selected)} available, {failed} failures')
             if args.command in ('backtest', 'all'):
-                trades = run_backtest(root, u, c)
-                print(f'Trade rows: {len(trades)}; complete: {trades.trade_status.eq("complete").sum()}')
-            if args.command == 'all':
+                if portfolio_mode(c):
+                    print(run_strategies(root, u, c))
+                else:
+                    trades = run_backtest(root, u, c)
+                    print(f'Trade rows: {len(trades)}; complete: {trades.trade_status.eq("complete").sum()}')
+            if args.command == 'all' and not portfolio_mode(c):
                 print(analyze(root, c))
             print(f'Outputs: {root / "results"}')
             return 0

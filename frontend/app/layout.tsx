@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 export const metadata: Metadata = {
   title: "底値出来高研究 | Japanese Equity Lab",
-  description: "日本株の底値・出来高急増戦略をEvent Studyで検証",
+  description: "日本株の底値・出来高急増とKenmo型戦略を検証",
 };
 export default function RootLayout({
   children,
@@ -30,9 +30,9 @@ export default function RootLayout({
             </Link>
           </nav>
           <div className="sidebar-foot">
-            252日高値 × 20日平均出来高
+            底値・出来高 ＋ Kenmo型戦略
             <br />
-            <span>EVENT STUDY · V1</span>
+            <span>EVENT STUDY / PORTFOLIO</span>
           </div>
         </aside>
         <div className="workspace">

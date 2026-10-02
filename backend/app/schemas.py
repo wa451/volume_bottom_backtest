@@ -3,6 +3,8 @@ from datetime import date
 import re
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from src.utils import today, validate_config
+from src.strategy_config import StrategyParameters, PortfolioSettings, TradingCosts, parameter_grid, parameter_defaults, portfolio_mode
+from src.strategies import REGISTRY
 
 
 class BacktestRequest(BaseModel):
@@ -22,6 +24,10 @@ class BacktestRequest(BaseModel):
     holding_periods: list[int] = Field(
         default_factory=lambda: [20, 60, 120, 250], min_length=1, max_length=6
     )
+    strategy_ids: list[str] = Field(default_factory=lambda: ['bottom_volume'], min_length=1, max_length=4)
+    strategy_params: dict[str, StrategyParameters] = Field(default_factory=dict)
+    portfolio: PortfolioSettings = Field(default_factory=PortfolioSettings)
+    costs: TradingCosts | None = None
     cooldown: int = Field(20, ge=0, le=1000)
     markets: list[str] = Field(
         default_factory=lambda: ["Prime", "Standard", "Growth"],
@@ -103,6 +109,17 @@ class BacktestRequest(BaseModel):
             "market_cap_groups": self.market_cap_groups,
             "tickers": self.tickers,
         }
+        if not set(self.strategy_ids) <= REGISTRY.keys() or len(set(self.strategy_ids)) != len(self.strategy_ids):
+            raise ValueError("戦略が不正・重複しています")
+        if not set(self.strategy_params) <= set(REGISTRY) - {"bottom_volume"}:
+            raise ValueError("戦略パラメータの対象が不正です")
+        c["strategy_ids"] = self.strategy_ids
+        c["strategy_params"] = {key: {**parameter_defaults(key), **value.model_dump(exclude_unset=True)} for key, value in self.strategy_params.items()}
+        c["portfolio"] = self.portfolio.model_dump()
+        if self.costs is not None:
+            c["cost"] = self.costs.model_dump()
+        if portfolio_mode(c):
+            parameter_grid(c)
         c["output"]["heatmaps"] = False
         validate_config(c)
         return c
@@ -114,6 +131,7 @@ class UpdateRequest(BaseModel):
     tickers: list[str] = Field(default_factory=list, max_length=5000)
     retry_failed: bool = False
     refresh_universe: bool = True
+    include_strategy_data: bool = False
 
     @model_validator(mode="after")
     def valid(self):

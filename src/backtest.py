@@ -11,7 +11,8 @@ from .data_loader import load_prices, normalize_shares, PRICE_COLUMNS, align_ses
 from .corporate_actions import adjust_corporate_actions
 from .indicators import calculate_indicators
 from .market_cap import attach_market_cap
-from .signals import signal_mask, apply_cooldown
+from .signals import apply_cooldown
+from .strategies import REGISTRY
 from .benchmark import load_benchmarks, benchmark_return
 
 log = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ def ticker_trades(features: pd.DataFrame, info: dict, c: dict, benchmarks=None):
         valid_bar = valid_bar & df.market_cap_group.isin(cap_groups)
     rows, excluded = [], 0
     for dd, vr in product(s['drawdown_thresholds'], s['volume_ratio_thresholds']):
-        mask = signal_mask(df, dd, vr) & analysis_mask & valid_bar
+        mask = REGISTRY['bottom_volume'].entry_signals(df, {'drawdown_threshold': dd, 'volume_ratio': vr}, {}) & analysis_mask & valid_bar
         excluded += int((mask & df.split_excluded).sum())
         for pos in apply_cooldown(mask & ~df.split_excluded, s['signal_cooldown_days']):
             signal_date = df.index[pos]

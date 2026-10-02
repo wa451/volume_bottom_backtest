@@ -1,5 +1,21 @@
 export type MarketCapBin = { name: string; min: number; max: number | null };
+export type StrategyParameters = Record<
+  string,
+  number | string | boolean | number[] | string[]
+>;
 export type Config = {
+  strategy_ids?: string[];
+  strategy_params?: Record<string, StrategyParameters>;
+  portfolio?: {
+    initial_capital: number;
+    max_positions: number;
+    benchmark: string;
+  };
+  costs?: {
+    buy_cost_rate: number;
+    sell_cost_rate: number;
+    slippage_rate: number;
+  };
   start_date: string;
   end_date: string;
   train_start: string;
@@ -44,6 +60,10 @@ export type Job = {
   config: Config;
   market_cap_bins: MarketCapBin[];
   summary: {
+    analysis_mode?: string;
+    warnings?: string[];
+    benchmark_available?: boolean;
+    benchmark_ticker?: string;
     quality?: Record<string, number | null>;
     parameter_combinations?: number;
     holding_periods?: number[];
@@ -73,6 +93,10 @@ export type MarketItem = {
   latest_date?: string;
   price_rows?: number;
   shares_rows?: number;
+  earnings_rows?: number;
+  fundamentals_rows?: number;
+  earnings_error?: string;
+  fundamentals_error?: string;
   price_error?: string;
   shares_error?: string;
   download_mode?: string;

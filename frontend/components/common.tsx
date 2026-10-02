@@ -61,13 +61,17 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
                   ? j.config.tickers?.length
                     ? number(j.config.tickers.length) + "銘柄"
                     : "全市場"
-                  : number(
-                      j.config.drawdown_thresholds.length *
-                        j.config.volume_ratio_thresholds.length,
-                    ) +
-                    "条件 / " +
-                    j.config.holding_periods.join(", ") +
-                    "日"}
+                  : j.config.strategy_ids &&
+                      (j.config.strategy_ids.length !== 1 ||
+                        j.config.strategy_ids[0] !== "bottom_volume")
+                    ? j.config.strategy_ids.join(" / ")
+                    : number(
+                        j.config.drawdown_thresholds.length *
+                          j.config.volume_ratio_thresholds.length,
+                      ) +
+                      "条件 / " +
+                      j.config.holding_periods.join(", ") +
+                      "日"}
               </td>
               <td>
                 <Badge status={j.status} />
@@ -83,12 +87,13 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
     </div>
   );
 }
-export function Notice() {
+export function Notice({ portfolio = false }: { portfolio?: boolean }) {
   return (
     <aside className="notice">
       <strong>Survivorship Bias</strong>{" "}
-      現在上場している国内普通株のみを対象とし、倒産・上場廃止銘柄を含みません。市場区分は現在の属性です。無料データの欠損・補正制約があり、結果はEvent
-      Studyとして確認してください。
+      現在上場している国内普通株のみを対象とし、倒産・上場廃止銘柄を含みません。市場区分は現在の属性です。無料データの欠損・補正制約があり、結果は
+      {portfolio ? "資金配分を仮定した参考検証" : "Event Study"}
+      として確認してください。
     </aside>
   );
 }

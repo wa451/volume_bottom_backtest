@@ -13,6 +13,8 @@ from src.universe import load_universe
 from src.downloader import Downloader
 from src.backtest import prepare_features, run_backtest
 from src.report import analyze
+from src.strategy_runner import run_strategies
+from src.strategy_config import portfolio_mode
 from backend.app.settings import Settings
 from backend.app.db import Database, utcnow
 from backend.app.models import Job, Config, Result, TradeArtifact, SystemState
@@ -135,7 +137,7 @@ class Worker:
                         if c.get("benchmark", {}).get("enabled", True)
                         else []
                     )
-                    total = len(universe) * 2 + len(benchmarks)
+                    total = len(universe) * (4 if request.get("include_strategy_data") else 2) + len(benchmarks)
                     prior_failures = (
                         self.c.data_root / "results/logs/failed_tickers.csv"
                     )
@@ -160,12 +162,13 @@ class Worker:
                         targets = {
                             (t, kind)
                             for t in universe.ticker
-                            for kind in ("price", "shares")
+                            for kind in (("price", "shares", "earnings", "fundamentals") if request.get("include_strategy_data") else ("price", "shares"))
                         }
                         targets.update((t, "benchmark") for t in benchmarks)
                         total = len(targets.intersection(dl.failures))
                     states = dl.run(
-                        universe, retry_failed=request.get("retry_failed", False)
+                        universe, retry_failed=request.get("retry_failed", False),
+                        **({"include_strategy_data": True} if request.get("include_strategy_data") else {})
                     )
                     # Preserve failure history across new update jobs (retry_failed).
                     summary = {
@@ -180,58 +183,64 @@ class Worker:
                     progress("analyzing", 0, 1, "価格・株式数のバックアップ", 86, 95)
                     backup_market(self.c, self.db, self.storage)
                 else:
-                    failed_features = {}
-                    for i, ticker in enumerate(universe.ticker):
-                        progress(
-                            "preprocessing",
-                            i,
-                            len(universe),
-                            ticker + " / 指標・当時時価総額",
-                            2,
-                            25,
+                    if portfolio_mode(c):
+                        summary = run_strategies(run_root, universe, c,
+                            progress=lambda done, total, detail: progress("backtesting", done, total, detail, 2, 92))
+                        data = pd.DataFrame()
+                        trades = range(summary["trade_artifact_rows"])
+                    else:
+                        failed_features = {}
+                        for i, ticker in enumerate(universe.ticker):
+                            progress(
+                                "preprocessing",
+                                i,
+                                len(universe),
+                                ticker + " / 指標・当時時価総額",
+                                2,
+                                25,
+                            )
+                            try:
+                                prepare_features(run_root, ticker, c)
+                            except (ValueError, OSError, KeyError) as exc:
+                                failed_features[ticker] = str(exc)
+                        trades = run_backtest(
+                            run_root,
+                            universe,
+                            c,
+                            progress=lambda done, total, detail: progress(
+                                "backtesting",
+                                done,
+                                total,
+                                detail + " / 全選択条件を評価",
+                                25,
+                                65,
+                            ),
                         )
-                        try:
-                            prepare_features(run_root, ticker, c)
-                        except (ValueError, OSError, KeyError) as exc:
-                            failed_features[ticker] = str(exc)
-                    trades = run_backtest(
-                        run_root,
-                        universe,
-                        c,
-                        progress=lambda done, total, detail: progress(
-                            "backtesting",
-                            done,
-                            total,
-                            detail + " / 全選択条件を評価",
-                            25,
-                            65,
-                        ),
-                    )
-                    quality = analyze(
-                        run_root,
-                        c,
-                        intersections=True,
-                        full=True,
-                        progress=lambda done, total, detail: progress(
-                            "analyzing", done, total, detail, 65, 92
-                        ),
-                    )
-                    data = pd.read_csv(run_root / "results/parameter_results.csv")
-                    candidates = pd.read_csv(
-                        run_root / "results/candidate_test_results.csv"
-                    )
-                    summary = {
-                        "quality": quality,
-                        "parameter_combinations": len(
-                            c["strategy"]["drawdown_thresholds"]
+                        quality = analyze(
+                            run_root,
+                            c,
+                            intersections=True,
+                            full=True,
+                            progress=lambda done, total, detail: progress(
+                                "analyzing", done, total, detail, 65, 92
+                            ),
                         )
-                        * len(c["strategy"]["volume_ratio_thresholds"]),
-                        "holding_periods": c["strategy"]["holding_periods"],
-                        "minimum_trades": c["validation"]["minimum_trades"],
-                        "candidates": clean(candidates.to_dict("records")),
-                        "feature_errors": failed_features,
-                        "full_note": "FULLは境界除外済みのTrainとTestの有効取引を結合した参考値です。候補選択はTrainのみ。",
-                    }
+                        data = pd.read_csv(run_root / "results/parameter_results.csv")
+                        candidates = pd.read_csv(
+                            run_root / "results/candidate_test_results.csv"
+                        )
+                        summary = {
+                            "quality": quality,
+                            "parameter_combinations": len(
+                                c["strategy"]["drawdown_thresholds"]
+                            )
+                            * len(c["strategy"]["volume_ratio_thresholds"]),
+                            "holding_periods": c["strategy"]["holding_periods"],
+                            "minimum_trades": c["validation"]["minimum_trades"],
+                            "candidates": clean(candidates.to_dict("records")),
+                            "feature_errors": failed_features,
+                            "full_note": "FULLは境界除外済みのTrainとTestの有効取引を結合した参考値です。候補選択はTrainのみ。",
+                        }
                     for path in (run_root / "results").iterdir():
                         if path.is_file():
                             key = f"runs/{job_id}/{owner}/{path.name}"

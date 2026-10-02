@@ -11,4 +11,5 @@ tqdm>=4.66
 xlrd>=2.0
 openpyxl>=3.1
 filelock>=3.15
+pydantic>=2.7,<3
 pytest>=8
