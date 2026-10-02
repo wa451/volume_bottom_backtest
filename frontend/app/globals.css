@@ -456,6 +456,35 @@ a:focus-visible {
   width: 100%;
   table-layout: fixed;
 }
+.heatmap-heading {
+  margin: 24px 0 16px;
+}
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
+  gap: 18px;
+}
+.heatmap-panel {
+  min-width: 0;
+}
+.heatmap-panel .heatmap button strong {
+  font-size: clamp(10px, 1.1vw, 16px);
+}
+.heatmap-panel .heatmap button {
+  padding-left: 2px;
+  padding-right: 2px;
+}
+.heatmap-panel .legend {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.detail-scope {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+  color: var(--muted);
+}
 .heatmap th {
   text-align: center;
   background: white;

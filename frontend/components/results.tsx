@@ -30,6 +30,7 @@ export default function Results({ job: j }: { job: Job }) {
   const [period, setPeriod] = useState("train");
   const [holding, setHolding] = useState(j.config.holding_periods[0]);
   const [cap, setCap] = useState("ALL");
+  const [heatCaps, setHeatCaps] = useState(["ALL"]);
   const [market, setMarket] = useState("ALL");
   const [metricKey, setMetric] = useState("mean_return");
   const [cell, setCell] = useState<Cell>({
@@ -45,7 +46,7 @@ export default function Results({ job: j }: { job: Job }) {
     market_segment: market,
     holding_period: holding,
   };
-  const scope = query(filters);
+  const scope = query({ ...filters, market_cap_group: "*" });
   const selected = query({ ...filters, ...cell });
   const heat = useApi<Page<Result>>(
     tab === "heatmap"
@@ -84,8 +85,16 @@ export default function Results({ job: j }: { job: Job }) {
   const q = j.summary.quality || {};
   const row = heat.data?.items.find(
     (r) =>
+      r.market_cap_group === cap &&
       r.drawdown_threshold === cell.drawdown_threshold &&
       r.volume_ratio_threshold === cell.volume_ratio_threshold,
+  );
+  const visibleHeatRows = (heat.data?.items || []).filter((r) =>
+    heatCaps.includes(r.market_cap_group),
+  );
+  const heatScale = Math.max(
+    ...visibleHeatRows.map((r) => Math.abs(Number(r[metricKey]) || 0)),
+    0.00001,
   );
   const overviewLabels: Record<string, string> = {
     price_success_count: "有効価格キャッシュ",
@@ -107,6 +116,21 @@ export default function Results({ job: j }: { job: Job }) {
   );
   function changeTab(v: string) {
     setTab(v);
+    setOffset(0);
+  }
+  function selectCap(group: string) {
+    if (tab === "heatmap") {
+      const next = heatCaps.includes(group)
+        ? heatCaps.filter((c) => c !== group)
+        : [...heatCaps, group];
+      if (!next.length) return;
+      setHeatCaps(next);
+      if (!heatCaps.includes(group)) setCap(group);
+      else if (cap === group) setCap(next[0]);
+    } else {
+      setCap(group);
+      setHeatCaps([group]);
+    }
     setOffset(0);
   }
   return (
@@ -231,16 +255,31 @@ export default function Results({ job: j }: { job: Job }) {
                 key={x}
                 aria-label={capLabels[x] || x}
                 title={marketCapRange(x, bins)}
-                className={cap === x ? "active" : ""}
-                onClick={() => {
-                  setCap(x);
-                  setOffset(0);
-                }}
+                aria-pressed={
+                  tab === "heatmap" ? heatCaps.includes(x) : cap === x
+                }
+                className={
+                  (tab === "heatmap" ? heatCaps.includes(x) : cap === x)
+                    ? "active"
+                    : ""
+                }
+                disabled={
+                  tab === "heatmap" &&
+                  heatCaps.length === 1 &&
+                  heatCaps.includes(x)
+                }
+                onClick={() => selectCap(x)}
               >
                 <MarketCapLabel group={x} bins={bins} />
               </button>
             ))}
           </div>
+          {tab === "heatmap" && (
+            <p className="check-note">
+              時価総額は複数選択できます（最低1区分）。選んだ区分を同じ色スケールで並べて表示します。
+              ALLも各区分と同時に比較できます。セルをクリックした区分の詳細・取引を下に表示します。
+            </p>
+          )}
           <p className="check-note">
             {period === "train"
               ? "候補はTrainの成績のみから選択します。"
@@ -367,32 +406,63 @@ export default function Results({ job: j }: { job: Job }) {
       )}
       {tab === "heatmap" && (
         <>
-          <div className="panel">
-            <div className="panel-head">
-              <h2>下落率 × 出来高倍率</h2>
-              <span className="muted">
-                {metrics[metricKey]} / {holding}営業日
-              </span>
-            </div>
-            <ErrorBox error={heat.error} />
-            {heat.data ? (
-              <Heatmap
-                rows={heat.data.items}
-                config={j.config}
-                metricKey={metricKey}
-                cell={cell}
-                onCell={setCell}
-              />
-            ) : (
-              <Empty>集計を読み込み中…</Empty>
-            )}
+          <div className="panel-head heatmap-heading">
+            <h2>下落率 × 出来高倍率</h2>
+            <span className="muted">
+              {metrics[metricKey]} / {holding}営業日 / {market} /{" "}
+              {period.toUpperCase()}
+            </span>
           </div>
-          {row && (
+          <ErrorBox error={heat.error} />
+          {heat.data ? (
+            <div className="heatmap-grid">
+              {caps
+                .filter((group) => heatCaps.includes(group))
+                .map((group) => (
+                  <section
+                    className="panel heatmap-panel"
+                    key={group}
+                    aria-label={(capLabels[group] || group) + "のヒートマップ"}
+                  >
+                    <div className="panel-head">
+                      <h3>
+                        <MarketCapLabel group={group} bins={bins} />
+                      </h3>
+                      {cap === group && (
+                        <span className="muted">詳細表示中</span>
+                      )}
+                    </div>
+                    <Heatmap
+                      rows={visibleHeatRows.filter(
+                        (r) => r.market_cap_group === group,
+                      )}
+                      config={j.config}
+                      metricKey={metricKey}
+                      scale={heatScale}
+                      cell={cap === group ? cell : null}
+                      onCell={(value) => {
+                        setCap(group);
+                        setCell(value);
+                      }}
+                    />
+                  </section>
+                ))}
+            </div>
+          ) : (
             <div className="panel">
+              <Empty>集計を読み込み中…</Empty>
+            </div>
+          )}
+          {row && (
+            <section className="panel" aria-label="選択条件の詳細">
               <h2>
                 条件詳細 · 下落率 ≥ {pct(cell.drawdown_threshold, false)} /
                 出来高 ≥ {cell.volume_ratio_threshold}x / {holding}日
               </h2>
+              <p className="detail-scope">
+                <MarketCapLabel group={cap} bins={bins} /> · {market} ·{" "}
+                {period.toUpperCase()}
+              </p>
               <div className="detail-grid">
                 <div className="mini-stats">
                   {[
@@ -443,7 +513,7 @@ export default function Results({ job: j }: { job: Job }) {
                   * 最低件数未満です。候補選択から除外しています。
                 </p>
               )}
-            </div>
+            </section>
           )}
           <Trades
             id={j.id}
@@ -464,6 +534,7 @@ export default function Results({ job: j }: { job: Job }) {
               rows={comparison.data.items}
               onSelect={(r) => {
                 setCap(r.market_cap_group);
+                setHeatCaps([r.market_cap_group]);
                 setMarket(r.market_segment);
                 setCell({
                   drawdown_threshold: r.drawdown_threshold,
@@ -524,6 +595,8 @@ export default function Results({ job: j }: { job: Job }) {
               offset={offset}
               onSelect={(r) => {
                 setHolding(r.holding_period);
+                setCap(r.market_cap_group);
+                setHeatCaps([r.market_cap_group]);
                 setCell({
                   drawdown_threshold: r.drawdown_threshold,
                   volume_ratio_threshold: r.volume_ratio_threshold,
@@ -717,19 +790,17 @@ function Heatmap({
   rows,
   config,
   metricKey,
+  scale,
   cell,
   onCell,
 }: {
   rows: Result[];
   config: Job["config"];
   metricKey: string;
-  cell: Cell;
+  scale: number;
+  cell: Cell | null;
   onCell: (c: Cell) => void;
 }) {
-  const scale = Math.max(
-    ...rows.map((r) => Math.abs(Number(r[metricKey]) || 0)),
-    0.00001,
-  );
   const sequential = ["num_trades", "win_rate"].includes(metricKey);
   function style(r: Result | undefined) {
     const value =
@@ -785,8 +856,8 @@ function Heatmap({
                           "下落率" + Math.round(d * 100) + "% 出来高" + v + "倍"
                         }
                         className={
-                          cell.drawdown_threshold === d &&
-                          cell.volume_ratio_threshold === v
+                          cell?.drawdown_threshold === d &&
+                          cell?.volume_ratio_threshold === v
                             ? "selected"
                             : ""
                         }
